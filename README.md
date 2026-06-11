@@ -114,10 +114,8 @@ For more examples, please refer to the interactive notebook [PDEformer_inference
 ```text
 ./
 │  PDEformer_inference.ipynb                     # English interactive notebook for inference examples
-│  PDEformer_inference_CN.ipynb                  # Chinese interactive notebook for inference examples
 │  pip-requirements.txt                          # Python dependency list
 │  README.md                                     # English documentation
-│  README_CN.md                                  # Chinese documentation
 ├─configs
 │  └─inference                                   # Configurations for loading pretrained PDEformer models
 │         model-L.yaml                           # Size-L model configuration
@@ -125,7 +123,6 @@ For more examples, please refer to the interactive notebook [PDEformer_inference
 │         model-S.yaml                           # Size-S model configuration
 ├─docs
 │  │  FILE_TREE.md                               # This file
-│  │  FILE_TREE_CN.md                            # Chinese file tree
 │  └─images                                      # Images used in README and notebooks
 ├─scripts
 │      run_ui.sh                                 # Start the GUI demonstration
