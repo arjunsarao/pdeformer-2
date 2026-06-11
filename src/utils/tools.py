@@ -1,20 +1,11 @@
 r"""Some tool functions."""
 import math
-import random
 
 import numpy as np
 from numpy.typing import NDArray
 import matplotlib.pyplot as plt
 
-import mindspore as ms
-from mindspore import nn, ops, Tensor
-
-
-def set_seed(seed: int) -> None:
-    r"""Set random seed"""
-    np.random.seed(seed)
-    random.seed(seed)
-    ms.set_seed(seed)
+from mindspore import nn
 
 
 def calculate_num_params(model: nn.Cell) -> str:
@@ -33,18 +24,6 @@ def calculate_num_params(model: nn.Cell) -> str:
         num_str = f"{(num_params / (1000*1000*1000)):.2f}" + "G"
 
     return num_str
-
-
-class AllGather(nn.Cell):
-    r"""Use nn.Cell to encapsulate ops.AllGather()."""
-
-    def __init__(self) -> None:
-        super().__init__()
-        self.allgather = ops.AllGather()
-
-    def construct(self, x: Tensor) -> Tensor:
-        r"""construct"""
-        return self.allgather(x)
 
 
 def sample_grf(batch_size: int = 1,

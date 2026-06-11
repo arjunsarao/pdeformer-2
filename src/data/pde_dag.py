@@ -729,9 +729,8 @@ class PDENodesCollector:
                      ) -> Union[PDENode, List[PDENode]]:
         r"""
         An arbitrary function that is used to represent unknown terms in a PDE.
-        This should be useful when we want to fine-tune a model using observed
-        data, with the underlying physical mechanism is not completely known to
-        us. We use these terms to inform the model of such unknown mechanisms.
+        This can be used as a symbolic placeholder when the underlying physical
+        mechanism is not completely known to us.
 
         Mathematically, we assume this function has `n` input values and `n`
         output values, and is NOT permutation equivariant.

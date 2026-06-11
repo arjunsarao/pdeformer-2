@@ -12,7 +12,6 @@ from omegaconf import DictConfig
 from src.cell import get_model
 from src.data.env import DAG_BC_VERSION
 from src.data.pde_dag import PDEAsDAG, PDENodesCollector
-from src.data.multi_pde import pde_types
 from src.data.multi_pde import terms_from_dict as terms
 from src.data.multi_pde import boundary_v2_from_dict as boundary_v2
 from src.inference import inference_cartesian
@@ -101,8 +100,7 @@ def _term_cls_to_obj(term_cls_dict: Dict[str, type],
 
 @record_pdeformer_solver("diffConvecReac", "dcr")  # pylint: disable=missing-docstring
 class PDEformerSolverDCR(PDEformerSolverBase):
-    __doc__ = r"""Solve diffusion-convection-reaction (DCR) equations using
-    pre-trained PDEformer models.""" + "\n" + pde_types.DiffConvecReac2DInfo.__doc__
+    r"""Solve diffusion-convection-reaction equations with PDEformer."""
 
     IS_WAVE: bool = False
     LG_KAPPA: bool = False
@@ -250,13 +248,11 @@ class PDEformerSolverDCR(PDEformerSolverBase):
 
 @record_pdeformer_solver("dcrLgK")
 class PDEformerSolverDCRLgKappa(PDEformerSolverDCR):
-    __doc__ = r"""Solve diffusion-convection-reaction (DCR) equations using
-    pre-trained PDEformer models.""" + "\n" + pde_types.DCRLgKappa2DInfo.__doc__
+    r"""Solve log-kappa diffusion-convection-reaction equations with PDEformer."""
     LG_KAPPA: bool = True
 
 
 @record_pdeformer_solver("wave")
 class PDEformerSolverWave(PDEformerSolverDCR):
-    __doc__ = r"""Solve wave equations using pre-trained PDEformer models.""" + \
-        "\n" + pde_types.Wave2DInfo.__doc__
+    r"""Solve wave equations with PDEformer."""
     IS_WAVE: bool = True

@@ -1,5 +1,4 @@
 r"""This module provides a function to load a configuration file."""
-from typing import Tuple
 from omegaconf import OmegaConf, DictConfig
 
 
@@ -11,8 +10,7 @@ def load_config(file_path: str) -> DictConfig:
         file_path (str): The path of yaml configuration file.
 
     Returns:
-        Tuple[dict, str]: The configuration dictionary and its string
-            representation.
+        DictConfig: The merged configuration dictionary.
     """
     if not file_path.endswith(".yaml"):
         raise ValueError("The configuration file must be a yaml file")

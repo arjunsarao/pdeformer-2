@@ -1,4 +1,3 @@
-r"""Utilities for training."""
+r"""Utilities for inference and visualization."""
 from .load_yaml import load_config
-from .record import init_record
-from .tools import AllGather, set_seed
+from .tools import sample_grf
