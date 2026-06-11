@@ -3,5 +3,6 @@ base_config: configs/inference/model-L.yaml
 model:
   inr:
     dim_hidden: 256
-  load_ckpt: none
-  # Set to path/to/model-M.pt or another torch state_dict checkpoint path.
+  load_ckpt: path/to/your/converted/model-M.pt
+  allow_untrained: False
+  # PyTorch build expects a converted torch state_dict checkpoint.

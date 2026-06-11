@@ -65,8 +65,9 @@ The details are as follows:
 | PDEformer-2-small | 27.75M | [configs/inference/model-S.yaml](configs/inference/model-S.yaml) | `model-S.pt` PyTorch state dict |
 
 The model factory now loads PyTorch checkpoints with `torch.load` and `load_state_dict`.
-Set `model.load_ckpt` to a PyTorch `state_dict` file, or to `none` to instantiate the model without weights.
+Set `model.load_ckpt` to a converted PyTorch `state_dict` file before running inference examples.
 Native MindSpore `.ckpt` files need to be converted before they can be loaded by this PyTorch build.
+For architecture/debug checks only, set `model.load_ckpt: none` together with `model.allow_untrained: true`.
 
 PDEformer-2-small (i.e., the S model) is only provided for users requiring faster inference.
 We have not evaluate its performance systematically.
@@ -75,7 +76,7 @@ We have not evaluate its performance systematically.
 
 The example code below demonstrates how to use PDEformer-2 to predict the solution of a given PDE,
 taking the nonlinear conservation law $u_{t}+(u^2)_x+(-0.3u)_y=0$ (with periodic boundary conditions) as the example.
-Before running with pretrained weights, convert the original PDEformer-2-fast release weights to a PyTorch state dict and change the value of the `model.load_ckpt` entry in [configs/inference/model-M.yaml](configs/inference/model-M.yaml) to the path of the corresponding `.pt` file.
+Before running, convert the original PDEformer-2-fast release weights to a PyTorch state dict and change the value of the `model.load_ckpt` entry in [configs/inference/model-M.yaml](configs/inference/model-M.yaml) to the path of the corresponding `.pt` file. Running without pretrained weights will produce misleading plots.
 
 ```python
 import numpy as np

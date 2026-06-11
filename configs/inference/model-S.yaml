@@ -7,5 +7,6 @@ model:
     ffn_embed_dim: 1024
   inr:
     dim_hidden: 128
-  load_ckpt: none
-  # Set to path/to/model-S.pt or another torch state_dict checkpoint path.
+  load_ckpt: path/to/your/converted/model-S.pt
+  allow_untrained: False
+  # PyTorch build expects a converted torch state_dict checkpoint.

@@ -37,8 +37,9 @@ model:
     dim_hidden: 512
     num_layers: 2
     shared: False
-  load_ckpt: none
-  # Set to model-L.pt or another torch state_dict checkpoint path.
+  load_ckpt: model-L.pt
+  allow_untrained: False
+  # PyTorch build expects a converted torch state_dict checkpoint.
 data:
   pde_dag:
     max_n_scalar_nodes: 80
