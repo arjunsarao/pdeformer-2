@@ -1,7 +1,7 @@
 r"""PDEformer model."""
 from omegaconf import DictConfig
-from mindspore import dtype as mstype
-from mindspore import nn, Tensor, ops
+import torch
+from torch import Tensor, nn
 
 from .inr_with_hypernet import get_inr_with_hypernet
 from .graphormer.graphormer_encoder import GraphormerEncoder
@@ -10,7 +10,7 @@ from .function_encoder import get_function_encoder
 from ..env import SPACE_DIM
 
 
-class PDEEncoder(nn.Cell):
+class PDEEncoder(nn.Module):
     r"""
     PDEEncoder is used for encoding the input graph and function into a fixed-size representation.
     It consists of a GraphormerEncoder, a scalar encoder and a function encoder.
@@ -20,8 +20,8 @@ class PDEEncoder(nn.Cell):
 
     Args:
         config_model (Dict): Configurations.
-        compute_dtype (mstype.Float): The computation type of the layer.
-            Default: ``mstype.float16``.
+        compute_dtype (torch.dtype): The computation type of the layer.
+            Default: ``torch.float16``.
 
     Inputs:
         - **node_type** (Tensor) - The type of each node, shape :math:`(n\_graph, n\_node, 1)`.
@@ -40,10 +40,10 @@ class PDEEncoder(nn.Cell):
         The output representation of teh PDE, shape :math:`(n\_node, n\_graph, embed\_dim)`.
 
     Supported Platforms:
-        ``Ascend`` ``GPU``
+        ``CPU`` ``CUDA``
     """
 
-    def __init__(self, config_model: DictConfig, compute_dtype=mstype.float16) -> None:
+    def __init__(self, config_model: DictConfig, compute_dtype=torch.float16) -> None:
         super().__init__()
 
         graphormer_config = config_model.graphormer
@@ -64,15 +64,15 @@ class PDEEncoder(nn.Cell):
             graphormer_config.embed_dim,
             compute_dtype)
 
-    def construct(self,
-                  node_type: Tensor,
-                  node_scalar: Tensor,
-                  node_function: Tensor,
-                  in_degree: Tensor,
-                  out_degree: Tensor,
-                  attn_bias: Tensor,
-                  spatial_pos: Tensor) -> Tensor:
-        r"""construct"""
+    def forward(self,
+                node_type: Tensor,
+                node_scalar: Tensor,
+                node_function: Tensor,
+                in_degree: Tensor,
+                out_degree: Tensor,
+                attn_bias: Tensor,
+                spatial_pos: Tensor) -> Tensor:
+        r"""forward"""
         node_scalar_feature = self.scalar_encoder(node_scalar)  # [n_graph, num_scalar, embed_dim]
 
         (n_graph, num_function, num_points_function, _) = node_function.shape
@@ -86,7 +86,7 @@ class PDEEncoder(nn.Cell):
             n_graph, -1, node_scalar_feature.shape[-1])
 
         # Shape is [n_graph, num_scalar+num_function*num_branches, embed_dim].
-        node_input_feature = ops.cat((node_scalar_feature, node_function_feature), axis=1)
+        node_input_feature = torch.cat((node_scalar_feature, node_function_feature), dim=1)
 
         out = self.graphormer(node_type, node_input_feature, in_degree,
                               out_degree, attn_bias, spatial_pos)  # [n_node, n_graph, embed_dim]
@@ -94,7 +94,7 @@ class PDEEncoder(nn.Cell):
         return out  # [n_node, n_graph, embed_dim]
 
 
-class PDEformer(nn.Cell):
+class PDEformer(nn.Module):
     r"""
     PDEformer consists of a PDEEncoder and an INR (with hypernet). The
     PDEEncoder encodes the PDE into a fixed-size representation, and the INR
@@ -108,8 +108,8 @@ class PDEformer(nn.Cell):
 
     Args:
         config_model (Dict): Configurations.
-        compute_dtype (mstype.Float): The computation type of the layer.
-            Default: ``mstype.float16``.
+        compute_dtype (torch.dtype): The computation type of the layer.
+            Default: ``torch.float16``.
 
     Inputs:
         - **node_type** (Tensor) - The type of each node, shape :math:`(n\_graph, n\_node, 1)`.
@@ -131,10 +131,10 @@ class PDEformer(nn.Cell):
             :math:`(n\_graph, num\_points, dim\_out)`.
 
     Supported Platforms:
-        ``Ascend`` ``GPU``
+        ``CPU`` ``CUDA``
     """
 
-    def __init__(self, config_model: DictConfig, compute_dtype=mstype.float16) -> None:
+    def __init__(self, config_model: DictConfig, compute_dtype=torch.float16) -> None:
         super().__init__()
         self.n_inr_nodes = config_model.inr.num_layers - 1
 
@@ -156,16 +156,16 @@ class PDEformer(nn.Cell):
                 inr_base=False,
                 compute_dtype=compute_dtype)
 
-    def construct(self,
-                  node_type: Tensor,
-                  node_scalar: Tensor,
-                  node_function: Tensor,
-                  in_degree: Tensor,
-                  out_degree: Tensor,
-                  attn_bias: Tensor,
-                  spatial_pos: Tensor,
-                  coordinate: Tensor) -> Tensor:
-        r"""construct"""
+    def forward(self,
+                node_type: Tensor,
+                node_scalar: Tensor,
+                node_function: Tensor,
+                in_degree: Tensor,
+                out_degree: Tensor,
+                attn_bias: Tensor,
+                spatial_pos: Tensor,
+                coordinate: Tensor) -> Tensor:
+        r"""forward"""
         pde_feature = self.pde_encoder(node_type, node_scalar, node_function, in_degree,
                                        out_degree, attn_bias, spatial_pos)
 

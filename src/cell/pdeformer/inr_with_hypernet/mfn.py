@@ -3,15 +3,13 @@ import math
 from typing import Optional
 import numpy as np
 
-import mindspore.common.dtype as mstype
-from mindspore import ops, nn, Tensor, Parameter
-from mindspore.ops import operations as P
-from mindspore.common.initializer import initializer, Uniform, HeUniform, One, Zero
+import torch
+from torch import Tensor, nn
 
 from ...basic_block import UniformInitDense
 
 
-class LayerNorm(nn.Cell):
+class LayerNorm(nn.Module):
     r"""
     Manually implemented Layer Normalization, in order to support second-order derivative.
 
@@ -26,55 +24,41 @@ class LayerNorm(nn.Cell):
         Tensor of shape :math:`(N, \ldots, D)` where :math:`D` is the dimension to be normalized.
 
     Supported Platforms:
-        ``Ascend`` ``GPU``
+        ``CPU`` ``CUDA``
     """
 
     def __init__(self, dim: int, eps: float = 1e-5) -> None:
         super().__init__()
-        gamma = initializer(One(), (dim,), dtype=mstype.float32)
-        beta = initializer(Zero(), (dim,), dtype=mstype.float32)
-
-        self.gamma = Parameter(gamma, name="gamma")
-        self.beta = Parameter(beta, name="beta")
-
-        self.mean = P.ReduceMean(keep_dims=True)
-        self.square = P.Square()
-        self.sqrt = P.Sqrt()
-        self.sub1 = P.Sub()
-        self.sub2 = P.Sub()
-        self.add = P.Add()
+        self.gamma = nn.Parameter(torch.ones(dim, dtype=torch.float32))
+        self.beta = nn.Parameter(torch.zeros(dim, dtype=torch.float32))
         self.eps = eps
-        self.mul = P.Mul()
-        self.add2 = P.Add()
-        self.real_div = P.RealDiv()
 
-    def construct(self, x: Tensor) -> Tensor:
-        r"""construct"""
-        mean = self.mean(x, -1)
-        diff = self.sub1(x, mean)
-        variance = self.mean(self.square(diff), -1)
-        variance_eps = self.sqrt(self.add(variance, self.eps))
-        output = self.real_div(diff, variance_eps)
-        output = self.add2(self.mul(output, self.gamma), self.beta)
+    def forward(self, x: Tensor) -> Tensor:
+        r"""forward"""
+        mean = x.mean(dim=-1, keepdim=True)
+        diff = x - mean
+        variance = torch.mean(diff.square(), dim=-1, keepdim=True)
+        output = diff / torch.sqrt(variance + self.eps)
+        output = output * self.gamma.to(dtype=x.dtype) + self.beta.to(dtype=x.dtype)
         return output
 
 
-class ResBlock(nn.Cell):
+class ResBlock(nn.Module):
     r"""Residual block."""
 
-    def __init__(self, dim_in: int, dim_out: int, compute_dtype=mstype.float16) -> None:
+    def __init__(self, dim_in: int, dim_out: int, compute_dtype=torch.float16) -> None:
         super().__init__()
-        self.linear = UniformInitDense(dim_in, dim_out).to_float(compute_dtype)
+        self.linear = UniformInitDense(dim_in, dim_out).to(dtype=compute_dtype)
         self.activation = nn.LeakyReLU(0.1)
 
-    def construct(self, x: Tensor) -> Tensor:
-        r"""construct"""
+    def forward(self, x: Tensor) -> Tensor:
+        r"""forward"""
         identity = x
         out = identity + self.activation(self.linear(x))
         return out
 
 
-class Hypernet(nn.Cell):
+class Hypernet(nn.Module):
     r"""Hypernet which can maps a latent vector to a set of modulations."""
 
     def __init__(self,
@@ -82,41 +66,41 @@ class Hypernet(nn.Cell):
                  num_modulations: int,
                  dim_hidden: int,
                  num_layers: int,
-                 compute_dtype=mstype.float16) -> None:
+                 compute_dtype=torch.float16) -> None:
         super().__init__()
         self.num_modulations = num_modulations
         self.dim_hidden = dim_hidden
         self.num_layers = num_layers
 
-        layers = [LayerNorm(latent_dim).to_float(mstype.float32)]
+        layers = [LayerNorm(latent_dim)]
         if num_layers == 1:
-            layers += [UniformInitDense(latent_dim, num_modulations).to_float(compute_dtype)]
+            layers += [UniformInitDense(latent_dim, num_modulations).to(dtype=compute_dtype)]
         else:
-            layers += [UniformInitDense(latent_dim, dim_hidden).to_float(compute_dtype)]
+            layers += [UniformInitDense(latent_dim, dim_hidden).to(dtype=compute_dtype)]
             for _ in range(num_layers - 1):
                 layers += [ResBlock(dim_hidden, dim_hidden, compute_dtype=compute_dtype)]
-            layers += [UniformInitDense(dim_hidden, num_modulations).to_float(compute_dtype)]
-        self.net = nn.SequentialCell(*layers)
+            layers += [UniformInitDense(dim_hidden, num_modulations).to(dtype=compute_dtype)]
+        self.net = nn.Sequential(*layers)
 
-    def construct(self, latent: Tensor) -> Tensor:
-        r"""construct"""
+    def forward(self, latent: Tensor) -> Tensor:
+        r"""forward"""
         return self.net(latent)
 
 
-class MFNLayer(nn.Cell):
+class MFNLayer(nn.Module):
     r"""
     A single MFN Layer.
 
     Args:
         - in1_features (int): The number of input features.
         - out_features (int): The number of output features.
-        - compute_dtype (mstype.Float): The computation type of the layer. Default: ``mstype.float16``.
+        - compute_dtype (torch.dtype): The computation type of the layer. Default: ``torch.float16``.
     """
 
     def __init__(self,
                  in1_features: int,
                  out_features: int,
-                 compute_dtype=mstype.float16) -> None:
+                 compute_dtype=torch.float16) -> None:
         super().__init__()
         self.in1_features = in1_features
         self.out_features = out_features
@@ -125,32 +109,25 @@ class MFNLayer(nn.Cell):
         if self.out_features <= 0:
             raise ValueError(f"'out_features' must be a positive integer, but got {out_features}.")
 
-        weight = initializer(HeUniform(negative_slope=math.sqrt(5)),
-                             (out_features, in1_features), dtype=mstype.float32)
+        self.linear = nn.Linear(in1_features, out_features).to(dtype=compute_dtype)
+        nn.init.kaiming_uniform_(self.linear.weight, a=math.sqrt(5))
         bound = 1 / math.sqrt(self.in1_features)
-        bias = initializer(Uniform(scale=bound),
-                           (out_features,), dtype=mstype.float32)
+        nn.init.uniform_(self.linear.bias, -bound, bound)
 
-        self.linear = nn.Dense(
-            in1_features, out_features).to_float(compute_dtype)
-
-        self.linear.weight.set_data(weight)
-        self.linear.bias.set_data(bias)
-
-    def construct(self,
-                  input1: Tensor,
-                  scale_modulations: Optional[Tensor] = None,  # [num_layers+1, bsz, out_features]
-                  shift_modulations: Optional[Tensor] = None,  # [num_layers+1, bsz, out_features]
-                  layer_idx: int = 0,
-                  ) -> Tensor:
-        r"""construct"""
+    def forward(self,
+                input1: Tensor,
+                scale_modulations: Optional[Tensor] = None,  # [num_layers+1, bsz, out_features]
+                shift_modulations: Optional[Tensor] = None,  # [num_layers+1, bsz, out_features]
+                layer_idx: int = 0,
+                ) -> Tensor:
+        r"""forward"""
         if scale_modulations is not None:
-            scale_code = ops.unsqueeze(scale_modulations[layer_idx], dim=1)  # [bsz, 1, out_features]
+            scale_code = scale_modulations[layer_idx].unsqueeze(dim=1)  # [bsz, 1, out_features]
         else:
             scale_code = 1.0
 
         if shift_modulations is not None:
-            shift_code = ops.unsqueeze(shift_modulations[layer_idx], dim=1)  # [bsz, 1, out_features]
+            shift_code = shift_modulations[layer_idx].unsqueeze(dim=1)  # [bsz, 1, out_features]
         else:
             shift_code = 0.0
 
@@ -160,70 +137,69 @@ class MFNLayer(nn.Cell):
         return linear_trans
 
 
-class DINOFourierLayer(nn.Cell):
+class DINOFourierLayer(nn.Module):
     r"""Sine filter as used in FourierNet."""
 
     def __init__(self, in_features: int, out_features: int, weight_scale: int) -> None:
         super().__init__()
-        weight = initializer(HeUniform(negative_slope=math.sqrt(
-            5)), (in_features, out_features), dtype=mstype.float32)
-        self.weight = Parameter(weight, name="weight")
+        self.weight = nn.Parameter(torch.empty(in_features, out_features))
+        nn.init.kaiming_uniform_(self.weight, a=math.sqrt(5))
         self.weight_scale = weight_scale
 
-    def construct(self, x: Tensor) -> Tensor:
-        r"""construct"""
-        linear_trans = ops.matmul(x, self.weight * self.weight_scale)
-        return ops.cat((ops.sin(linear_trans), ops.cos(linear_trans)), axis=-1)
+    def forward(self, x: Tensor) -> Tensor:
+        r"""forward"""
+        linear_trans = torch.matmul(x, self.weight.to(dtype=x.dtype) * self.weight_scale)
+        return torch.cat((torch.sin(linear_trans), torch.cos(linear_trans)), dim=-1)
 
 
-class OriginalFourierLayer(nn.Cell):
+class OriginalFourierLayer(nn.Module):
     r"""Sine filter as used in FourierNet."""
 
     def __init__(self, in_features: int, out_features: int, weight_scale: float) -> None:
         super().__init__()
-        self.linear = nn.Dense(in_features, out_features)
+        self.linear = nn.Linear(in_features, out_features)
         if in_features <= 0:
             raise ValueError(f"'in_features' must be a positive integer, but got {in_features}.")
         scale = weight_scale / math.sqrt(in_features)
-        self.linear.weight.set_data(initializer(
-            Uniform(scale), self.linear.weight.shape, self.linear.weight.dtype))
-        self.linear.bias.set_data(initializer(
-            Uniform(math.pi), self.linear.bias.shape, self.linear.bias.dtype))
+        nn.init.uniform_(self.linear.weight, -scale, scale)
+        nn.init.uniform_(self.linear.bias, -math.pi, math.pi)
 
-    def construct(self, x: Tensor) -> Tensor:
-        r"""construct"""
-        return ops.sin(self.linear(x))
+    def forward(self, x: Tensor) -> Tensor:
+        r"""forward"""
+        return torch.sin(self.linear(x))
 
 
-class GaborLayer(nn.Cell):
+class GaborLayer(nn.Module):
     r"""Gabor-like filter as used in GaborNet."""
 
     def __init__(self, in_features: int, out_features: int, weight_scale: float, alpha=1.0, beta=1.0) -> None:
         super().__init__()
-        self.linear = nn.Dense(in_features, out_features)
-        self.mu_value = Parameter(2 * np.random.rand(
-            in_features, out_features).astype(np.float32) - 1)
+        self.linear = nn.Linear(in_features, out_features)
+        self.mu_value = nn.Parameter(torch.from_numpy(2 * np.random.rand(
+            in_features, out_features).astype(np.float32) - 1))
         if in_features <= 0:
             raise ValueError(f"'in_features' must be a positive integer, but got {in_features}.")
         if out_features <= 0:
             raise ValueError(f"'out_features' must be a positive integer, but got {out_features}.")
         if beta <= 0:
             raise ValueError(f"'beta' must be a positive number, but got {beta}.")
-        self.gamma = Parameter(np.random.gamma(
-            alpha, 1 / beta, size=(1, out_features)).astype(np.float32))
+        self.gamma = nn.Parameter(torch.from_numpy(np.random.gamma(
+            alpha, 1 / beta, size=(1, out_features)).astype(np.float32)))
         scale = weight_scale / math.sqrt(in_features)
-        self.linear.weight.set_data(ops.sqrt(self.gamma.transpose(1, 0)) * initializer(
-            Uniform(scale), self.linear.weight.shape, self.linear.weight.dtype))
-        self.linear.bias.set_data(initializer(
-            Uniform(math.pi), self.linear.bias.shape, self.linear.bias.dtype))
+        with torch.no_grad():
+            uniform_weight = torch.empty_like(self.linear.weight).uniform_(-scale, scale)
+            self.linear.weight.copy_(torch.sqrt(self.gamma.t()) * uniform_weight)
+            self.linear.bias.uniform_(-math.pi, math.pi)
 
-    def construct(self, x: Tensor) -> Tensor:
-        r"""construct"""
-        dist = ops.sum((x.expand_dims(-1) - self.mu_value)**2, dim=-2)
-        return ops.sin(self.linear(x)) * ops.exp(-0.5 * self.gamma * dist)
+    def forward(self, x: Tensor) -> Tensor:
+        r"""forward"""
+        mu_value = self.mu_value.to(dtype=x.dtype)
+        gamma = self.gamma.to(dtype=x.dtype)
+        dist = torch.sum((x.unsqueeze(-1) - mu_value)**2, dim=-2)
+        return torch.sin(self.linear(x)) * torch.exp(-0.5 * gamma * dist)
 
 
-class MFNNet(nn.Cell):
+class MFNNet(nn.Module):
     r"""
     Multiplicative Filter Network (MFN) with Fourier/Gabor features.
 
@@ -241,8 +217,8 @@ class MFNNet(nn.Cell):
             parameter is initialized using the Gamma distribution
             Gamma(alpha, beta). Default: ``6.0``.
         gabor_beta (float, optional): Similar to gabor_alpha. Default: ``1.0``.
-        compute_dtype (ms.dtype, optional): Floating point data type of the
-            network. Default: ``ms.dtype.float16``.
+        compute_dtype (torch.dtype, optional): Floating point data type of the
+            network. Default: ``torch.float16``.
 
     Inputs:
         - coordinate (Tensor): Shape (batch_size, num_points, inr_dim_in).
@@ -254,10 +230,10 @@ class MFNNet(nn.Cell):
 
     Examples:
         >>> import numpy as np
-        >>> from mindspore import Tensor, nn
+        >>> import torch
         >>> from src.cell.pdeformer.function_encoder import MFNNet
-        >>> x = Tensor(np.random.randn(2, 10, 3), mstype.float32)
-        >>> mfn = MFNNet(3, 64, 128, 2, compute_dtype=mstype.float32)
+        >>> x = torch.tensor(np.random.randn(2, 10, 3), dtype=torch.float32)
+        >>> mfn = MFNNet(3, 64, 128, 2, compute_dtype=torch.float32)
         >>> out = mfn(x)
         >>> print(out.shape)
         (2, 10, 64)
@@ -273,12 +249,12 @@ class MFNNet(nn.Cell):
             input_scale: float = 256.0,
             gabor_alpha: float = 6.0,
             gabor_beta: float = 1.0,
-            compute_dtype=mstype.float16) -> None:
+            compute_dtype=torch.float16) -> None:
         super().__init__()
         self.inr_num_layers = inr_num_layers
         if self.inr_num_layers < 2:
             raise ValueError(f"'inr_num_layers' should be at least 2, but got {inr_num_layers}.")
-        self.mfn_layers = nn.CellList(
+        self.mfn_layers = nn.ModuleList(
             [MFNLayer(
                 inr_dim_in, inr_dim_hidden,
                 compute_dtype=compute_dtype,
@@ -287,45 +263,45 @@ class MFNNet(nn.Cell):
                 compute_dtype=compute_dtype,
             ) for _ in range(inr_num_layers - 2)]
         )
-        self.output_linear = nn.Dense(
-            inr_dim_hidden, inr_dim_out).to_float(compute_dtype)
-        self.layernorms = nn.CellList([LayerNorm(inr_dim_hidden).to_float(
-            mstype.float32) for _ in range(inr_num_layers - 2)])
+        self.output_linear = nn.Linear(
+            inr_dim_hidden, inr_dim_out).to(dtype=compute_dtype)
+        self.layernorms = nn.ModuleList([LayerNorm(inr_dim_hidden)
+                                         for _ in range(inr_num_layers - 2)])
 
         if filter_type.lower() == "dino_fourier":
             if inr_dim_hidden % 2 != 0:
                 raise ValueError(
                     f"inr_dim_hidden ({inr_dim_hidden}) should be divisible by 2"
                     " for MFN FourierNet (dino_fourier).")
-            self.filters = nn.CellList([DINOFourierLayer(
+            self.filters = nn.ModuleList([DINOFourierLayer(
                 inr_dim_in,
                 inr_dim_hidden // 2,
                 input_scale / np.sqrt(inr_num_layers - 1),
-            ).to_float(compute_dtype) for _ in range(inr_num_layers - 1)])
+            ).to(dtype=compute_dtype) for _ in range(inr_num_layers - 1)])
         elif filter_type.lower() == "original_fourier":
-            self.filters = nn.CellList([OriginalFourierLayer(
+            self.filters = nn.ModuleList([OriginalFourierLayer(
                 inr_dim_in,
                 inr_dim_hidden,
                 input_scale / np.sqrt(inr_num_layers - 1),
-            ).to_float(compute_dtype) for _ in range(inr_num_layers - 1)])
+            ).to(dtype=compute_dtype) for _ in range(inr_num_layers - 1)])
         elif filter_type.lower() == "gabor":
-            self.filters = nn.CellList([GaborLayer(
+            self.filters = nn.ModuleList([GaborLayer(
                 inr_dim_in,
                 inr_dim_hidden,
                 input_scale / np.sqrt(inr_num_layers - 1),
                 gabor_alpha / (inr_num_layers - 1),
                 gabor_beta,
-            ).to_float(compute_dtype) for _ in range(inr_num_layers - 1)])
+            ).to(dtype=compute_dtype) for _ in range(inr_num_layers - 1)])
         else:
             raise ValueError("MFN 'filter_type' should be in  ['original_fourier', "
                              f"'dino_fourier', 'gabor'], but got '{filter_type}'.")
 
-    def construct(self,
-                  coordinate: Tensor,
-                  scale_modulations: Optional[Tensor] = None,  # [inr_num_layers-1, bsz, out_features]
-                  shift_modulations: Optional[Tensor] = None,  # [inr_num_layers-1, bsz, out_features]
-                  ) -> Tensor:
-        r"""construct"""
+    def forward(self,
+                coordinate: Tensor,
+                scale_modulations: Optional[Tensor] = None,  # [inr_num_layers-1, bsz, out_features]
+                shift_modulations: Optional[Tensor] = None,  # [inr_num_layers-1, bsz, out_features]
+                ) -> Tensor:
+        r"""forward"""
         out = 0 * coordinate
         for i in range(self.inr_num_layers - 1):
             if i > 0:
@@ -337,7 +313,7 @@ class MFNNet(nn.Cell):
         return out
 
 
-class MFNNetWithHypernet(nn.Cell):
+class MFNNetWithHypernet(nn.Module):
     r"""
     MFNNet model with hypernets.
 
@@ -365,8 +341,8 @@ class MFNNetWithHypernet(nn.Cell):
             of the MFN network. Default: ``False``.
         enable_scale (bool, optional): Whether to introduce scale modulations
             of the MFN network. Default: ``False``.
-        compute_dtype (ms.dtype, optional): Floating point data type of the
-            network. Default: ``ms.dtype.float16``.
+        compute_dtype (torch.dtype, optional): Floating point data type of the
+            network. Default: ``torch.float16``.
 
     Inputs:
         - **coordinate** (Tensor) - Tensor of shape :math:`(batch\_size, num\_points, dim\_in)`.
@@ -376,11 +352,11 @@ class MFNNetWithHypernet(nn.Cell):
         Tensor of shape :math:`(batch\_size, num\_points, dim\_out)`.
 
     Supported Platforms:
-        ``Ascend`` ``GPU``
+        ``CPU`` ``CUDA``
 
     Examples:
         >>> import numpy as np
-        >>> from mindspore import Tensor, nn
+        >>> import torch
         >>> from src.cell.pdeformer.function_encoder import MFNNetWithHypernet
         >>> inr_dim_in = 2
         >>> inr_dim_out = 1
@@ -392,11 +368,11 @@ class MFNNetWithHypernet(nn.Cell):
         >>> mfn = MFNNetWithHypernet(inr_dim_in, inr_dim_out, inr_dim_hidden, inr_num_layers,
                                 hyper_dim_in, hyper_dim_hidden, hyper_num_layers,
                                 'dino_fourier', 256.0, 6.0, 1.0, False, True, True,
-                                mstype.float32)
+                                torch.float32)
         >>> bsz = 32
         >>> n_pts = 128
-        >>> coord = Tensor(np.random.randn(bsz, n_pts, inr_dim_in), mstype.float32)
-        >>> hyper_in = Tensor(np.random.randn(inr_num_layers - 1, bsz, hyper_dim_in), mstype.float32)
+        >>> coord = torch.tensor(np.random.randn(bsz, n_pts, inr_dim_in), dtype=torch.float32)
+        >>> hyper_in = torch.tensor(np.random.randn(inr_num_layers - 1, bsz, hyper_dim_in), dtype=torch.float32)
         >>> out = mfn(coord, hyper_in)
         >>> print(out.shape)
         (32, 128, 1)
@@ -418,7 +394,7 @@ class MFNNetWithHypernet(nn.Cell):
             share_hypernet: bool = False,
             enable_shift: bool = True,
             enable_scale: bool = True,
-            compute_dtype=mstype.float16) -> None:
+            compute_dtype=torch.float16) -> None:
         super().__init__()
         self.inr_num_layers = inr_num_layers
         self.enable_shift = enable_shift
@@ -454,14 +430,14 @@ class MFNNetWithHypernet(nn.Cell):
         else:
             num_hypernet = inr_num_layers - 1  # the number of hidden layers
             if self.enable_shift:
-                self.shift_hypernets = nn.CellList([
+                self.shift_hypernets = nn.ModuleList([
                     new_hypernet() for _ in range(num_hypernet)])
             if self.enable_scale:
-                self.scale_hypernets = nn.CellList([
+                self.scale_hypernets = nn.ModuleList([
                     new_hypernet() for _ in range(num_hypernet)])
 
-    def construct(self, coordinate: Tensor, hyper_in: Tensor) -> Tensor:
-        r"""construct"""
+    def forward(self, coordinate: Tensor, hyper_in: Tensor) -> Tensor:
+        r"""forward"""
         if self.enable_shift:
             shift_modulations = []
             for idx in range(self.inr_num_layers - 1):
@@ -472,7 +448,7 @@ class MFNNetWithHypernet(nn.Cell):
                     encoder_out = self.shift_hypernets[idx](encoder_in)
                 shift_modulations.append(encoder_out)
 
-            shift_modulations = ops.stack(shift_modulations, axis=0)  # [inr_num_layers - 1, n_graph, inr_dim_hidden]
+            shift_modulations = torch.stack(shift_modulations, dim=0)  # [inr_num_layers - 1, n_graph, inr_dim_hidden]
         else:
             shift_modulations = None
 
@@ -486,7 +462,7 @@ class MFNNetWithHypernet(nn.Cell):
                     encoder_out = self.scale_hypernets[idx](encoder_in)
                 scale_modulations.append(encoder_out)
 
-            scale_modulations = ops.stack(scale_modulations, axis=0)  # [inr_num_layers - 1, n_graph, inr_dim_hidden]
+            scale_modulations = torch.stack(scale_modulations, dim=0)  # [inr_num_layers - 1, n_graph, inr_dim_hidden]
         else:
             scale_modulations = None
 

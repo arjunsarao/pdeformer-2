@@ -2,13 +2,12 @@ r"""Some basic network blocks."""
 
 import math
 
-from mindspore import dtype as mstype
-from mindspore import nn, ops, Tensor
-from mindspore.common.initializer import initializer, Uniform
+import torch
+from torch import Tensor, nn
 
 
-class UniformInitDense(nn.Dense):
-    r"""Linear layer (nn.Dense) with Uniform initialization.
+class UniformInitDense(nn.Linear):
+    r"""Linear layer (nn.Linear) with Uniform initialization.
 
     Args:
         dim_in (int): Dimension of the input features.
@@ -25,14 +24,14 @@ class UniformInitDense(nn.Dense):
         Tensor of shape :math:`(*, dim\_out)`.
 
     Supported Platforms:
-        ``Ascend`` ``GPU``
+        ``CPU`` ``CUDA``
 
     Examples:
         >>> import numpy as np
-        >>> from mindspore import Tensor
+        >>> import torch
         >>> from src.cell.basic_block import UniformInitDense
         >>> dense = UniformInitDense(10, 5, has_bias=True, scale=0.1)
-        >>> x = Tensor(np.random.rand(16, 10), mstype.float32)
+        >>> x = torch.tensor(np.random.rand(16, 10), dtype=torch.float32)
         >>> y = dense(x)
         >>> print(y.shape)
         (16, 5)
@@ -46,39 +45,31 @@ class UniformInitDense(nn.Dense):
                  bias_scale: float = None,
                  modify_he_init: bool = False,
                  neg_slope: float = 0.0) -> None:
-        super().__init__(dim_in, dim_out, has_bias=has_bias)
+        super().__init__(dim_in, dim_out, bias=has_bias)
 
         # initialize parameters
+        if dim_in <= 0:
+            raise ValueError(
+                f"'dim_in' should be greater than 0, but got {dim_in}.")
         if modify_he_init:
             if scale is None:
-                if dim_in <= 0:
-                    raise ValueError(
-                        f"'dim_in' should be greater than 0, but got {dim_in}.")
                 # Modified He-Kaiming uniform initialization
                 scale = math.sqrt(6.0 / ((1.0 + neg_slope ** 2) * dim_in))
-            self.weight.set_data(initializer(
-                Uniform(scale), self.weight.shape, self.weight.dtype))
+            nn.init.uniform_(self.weight, -scale, scale)
             if has_bias:
                 if bias_scale is None:
-                    self.bias.set_data(initializer(
-                        "zeros", self.bias.shape, self.bias.dtype))
+                    nn.init.zeros_(self.bias)
                 else:
-                    self.bias.set_data(initializer(
-                        Uniform(bias_scale), self.bias.shape, self.bias.dtype))
+                    nn.init.uniform_(self.bias, -bias_scale, bias_scale)
         else:
             if scale is None:
-                if dim_in <= 0:
-                    raise ValueError(
-                        f"'dim_in' should be greater than 0, but got {dim_in}.")
                 scale = math.sqrt(1 / dim_in)  # Kaiming uniform initialization
-            self.weight.set_data(initializer(
-                Uniform(scale), self.weight.shape, self.weight.dtype))
+            nn.init.uniform_(self.weight, -scale, scale)
             if has_bias:
-                self.bias.set_data(initializer(
-                    Uniform(scale), self.bias.shape, self.bias.dtype))
+                nn.init.uniform_(self.bias, -scale, scale)
 
 
-class MLP(nn.Cell):
+class MLP(nn.Module):
     r"""Multi-layer perceptron (MLP).
 
     Args:
@@ -86,8 +77,8 @@ class MLP(nn.Cell):
         dim_out (int): Dimension of the output features.
         dim_hidden (int): Dimension of hidden layer features.
         num_layers (int): Number of Layers. Default: ``3``.
-        compute_dtype (mstype.Float): The floating point precision of the
-            layer. Default: ``mstype.float16``.
+        compute_dtype (torch.dtype): The floating point precision of the
+            layer. Default: ``torch.float16``.
 
     Inputs:
         - **x** (Tensor) - Tensor of shape :math:`(*, dim\_in)`.
@@ -96,15 +87,15 @@ class MLP(nn.Cell):
         Tensor of shape :math:`(*, dim\_out)`.
 
     Supported Platforms:
-        ``Ascend`` ``GPU``
+        ``CPU`` ``CUDA``
 
     Examples:
         >>> import numpy as np
-        >>> from mindspore import Tensor
-        >>> from mindspore import dtype as mstype
+        >>> import torch
+        >>>
         >>> from src.cell.basic_block import MLP
         >>> mlp = MLP(dim_in=10, dim_out=5, dim_hidden=128, num_layers=3)
-        >>> x = Tensor(np.random.rand(16, 10), mstype.float32)
+        >>> x = torch.tensor(np.random.rand(16, 10), dtype=torch.float32)
         >>> y = mlp(x)
         >>> print(y.shape)
         (16, 5)
@@ -118,50 +109,50 @@ class MLP(nn.Cell):
                  *,  # keyword-only arguments afterwards
                  mode: str = None,
                  modify_he_init: bool = False,
-                 compute_dtype=mstype.float16) -> None:
+                 compute_dtype=torch.float16) -> None:
         super().__init__()
 
         if num_layers > 1:
             layers = []
             layers.append(UniformInitDense(
                 dim_in, dim_hidden, has_bias=True,
-                modify_he_init=modify_he_init).to_float(compute_dtype))
+                modify_he_init=modify_he_init).to(dtype=compute_dtype))
             layers.append(nn.ReLU())
             for _ in range(num_layers - 2):
                 layers.append(UniformInitDense(
                     dim_hidden, dim_hidden, has_bias=True,
-                    modify_he_init=modify_he_init).to_float(compute_dtype))
+                    modify_he_init=modify_he_init).to(dtype=compute_dtype))
                 layers.append(nn.ReLU())
             if mode in ['shift', 'scale', 'affine'] and modify_he_init:
                 layers.append(UniformInitDense(
                     dim_hidden, dim_out, has_bias=True, scale=0.0,
-                    modify_he_init=modify_he_init).to_float(compute_dtype))
+                    modify_he_init=modify_he_init).to(dtype=compute_dtype))
             else:
                 layers.append(UniformInitDense(
                     dim_hidden, dim_out, has_bias=True,
-                    modify_he_init=modify_he_init).to_float(compute_dtype))
-            self.net = nn.SequentialCell(layers)
+                    modify_he_init=modify_he_init).to(dtype=compute_dtype))
+            self.net = nn.Sequential(*layers)
         elif num_layers == 1:
             if mode in ['shift', 'scale', 'affine'] and modify_he_init:
                 self.net = UniformInitDense(
                     dim_in, dim_out, has_bias=True, scale=0.0,
-                    modify_he_init=modify_he_init).to_float(compute_dtype)
+                    modify_he_init=modify_he_init).to(dtype=compute_dtype)
             else:
                 self.net = UniformInitDense(
                     dim_in, dim_out, has_bias=True,
-                    modify_he_init=modify_he_init).to_float(compute_dtype)
+                    modify_he_init=modify_he_init).to(dtype=compute_dtype)
         elif num_layers == 0 and dim_in == dim_out:
-            self.net = ops.Identity()
+            self.net = nn.Identity()
         else:
             raise ValueError(
                 f"'num_layers' should be greater than 0, but got {num_layers}.")
 
-    def construct(self, x: Tensor) -> Tensor:
-        r"""construct"""
+    def forward(self, x: Tensor) -> Tensor:
+        r"""forward"""
         return self.net(x)
 
 
-class CoordPositionalEncoding(nn.Cell):
+class CoordPositionalEncoding(nn.Module):
     r"""Coordinate positional encoding used in implicit neural representations
     (INRs): x -> [x, sin(x), cos(x), .., sin(2**k * x), cos(2**k * x)] for example.
 
@@ -180,14 +171,14 @@ class CoordPositionalEncoding(nn.Cell):
         dim_out = (1 + 2 * num_pos_enc) * dim_in
 
     Supported Platforms:
-        ``Ascend`` ``GPU``
+        ``CPU`` ``CUDA``
 
     Examples:
         >>> import numpy as np
-        >>> from mindspore import Tensor
+        >>> import torch
         >>> from src.cell.basic_block import CoordPositionalEncoding
         >>> pos_enc = CoordPositionalEncoding(num_pos_enc=2, period=2.0)
-        >>> x = Tensor(np.random.rand(16, 10), mstype.float32)
+        >>> x = torch.tensor(np.random.rand(16, 10), dtype=torch.float32)
         >>> y = pos_enc(x)
         >>> print(y.shape)
         (16, 50)
@@ -200,16 +191,16 @@ class CoordPositionalEncoding(nn.Cell):
         omega_0 = 2 * math.pi / period
         self.omegas = [2**k * omega_0 for k in range(num_pos_enc)]
 
-    def construct(self, x: Tensor) -> Tensor:
-        r"""construct"""
+    def forward(self, x: Tensor) -> Tensor:
+        r"""forward"""
         pos_enc_list = [x]
         for omega in self.omegas:
-            pos_enc_list.extend([ops.sin(omega * x), ops.cos(omega * x)])
-        x = ops.concat(pos_enc_list, axis=-1)
+            pos_enc_list.extend([torch.sin(omega * x), torch.cos(omega * x)])
+        x = torch.cat(pos_enc_list, dim=-1)
         return x
 
 
-class Sine(nn.Cell):
+class Sine(nn.Module):
     r"""Sine activation with scaling factor.
 
     Args:
@@ -222,14 +213,14 @@ class Sine(nn.Cell):
         Output features of shape :math:`(*, dim\_in)`.
 
     Supported Platforms:
-        ``Ascend`` ``GPU`` ``CPU``
+        ``CPU`` ``CUDA`` ``CPU``
 
     Examples:
         >>> import numpy as np
-        >>> from mindspore import Tensor
+        >>> import torch
         >>> from src.cell.basic_block import Sine
         >>> sine = Sine(w0=1.0)
-        >>> x = Tensor(np.random.rand(16, 10), mstype.float32)
+        >>> x = torch.tensor(np.random.rand(16, 10), dtype=torch.float32)
         >>> y = sine(x)
         >>> print(y.shape)
         (16, 10)
@@ -239,12 +230,12 @@ class Sine(nn.Cell):
         super().__init__()
         self.omega_0 = w0
 
-    def construct(self, x: Tensor) -> Tensor:
-        r"""construct"""
-        return ops.sin(self.omega_0 * x)
+    def forward(self, x: Tensor) -> Tensor:
+        r"""forward"""
+        return torch.sin(self.omega_0 * x)
 
 
-class Scale(nn.Cell):
+class Scale(nn.Module):
     r"""Scale the input Tensor.
 
     Args:
@@ -257,14 +248,14 @@ class Scale(nn.Cell):
         Output features of shape :math:`(*, dim\_in)`.
 
     Supported Platforms:
-        ``Ascend`` ``GPU`` ``CPU``
+        ``CPU`` ``CUDA`` ``CPU``
 
     Examples:
         >>> import numpy as np
-        >>> from mindspore import Tensor
+        >>> import torch
         >>> from src.cell.basic_block import Sine
         >>> scale = Scale(a=1.0)
-        >>> x = Tensor(np.random.rand(16, 10), mstype.float32)
+        >>> x = torch.tensor(np.random.rand(16, 10), dtype=torch.float32)
         >>> y = sine(x)
         >>> print(y.shape)
         (16, 10)
@@ -274,6 +265,6 @@ class Scale(nn.Cell):
         super().__init__()
         self.a = a
 
-    def construct(self, x: Tensor) -> Tensor:
-        r"""construct"""
+    def forward(self, x: Tensor) -> Tensor:
+        r"""forward"""
         return self.a * x

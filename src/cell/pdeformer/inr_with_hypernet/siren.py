@@ -2,14 +2,13 @@ r"""Siren model."""
 from typing import Optional
 import math
 
-from mindspore import dtype as mstype
-from mindspore import Tensor, nn, ops
-from mindspore.common.initializer import initializer, Uniform
+import torch
+from torch import Tensor, nn
 
 from ...basic_block import MLP, CoordPositionalEncoding, Sine
 
 
-class Siren(nn.Cell):
+class Siren(nn.Module):
     r"""
     SIREN model. For SIREN's details, please refer to: https://www.vincentsitzmann.com/siren/.
 
@@ -23,7 +22,7 @@ class Siren(nn.Cell):
         weight_scale (float, optional): "c" value from SIREN paper used for weight initialization. Default: ``6.0``.
         num_pos_enc (int, optional): Number of positional embedding frequencies for the coordinate input.
             Default: ``5``.
-        compute_dtype (ms.dtype, optional): Floating point data type of the network. Default: ``ms.dtype.float16``.
+        compute_dtype (torch.dtype, optional): Floating point data type of the network. Default: ``torch.float16``.
 
     Inputs:
         - **x** (Tensor): Tensor of shape :math:`(batch\_size, num\_points, dim\_in)`.
@@ -36,18 +35,18 @@ class Siren(nn.Cell):
         Output Tensor of shape :math:`(batch\_size, num\_points, dim\_out)`.
 
     Supported Platforms:
-        ``Ascend`` ``GPU``
+        ``CPU`` ``CUDA``
 
     Examples:
-        >>> import mindspore as ms
-        >>> from mindspore import nn
+        >>> import torch
+        >>> from torch import nn
         >>> from src.cell.pdeformer.inr.siren import Siren
         >>> inr_dim_in = 2
         >>> inr_dim_out = 1
         >>> inr_dim_hidden = 64
         >>> inr_num_layers = 4
-        >>> siren = Siren(inr_dim_in, inr_dim_hidden, inr_dim_out, inr_num_layers, compute_dtype=ms.float32)
-        >>> x = ms.Tensor(np.random.rand(16, 100, 2), ms.float32)
+        >>> siren = Siren(inr_dim_in, inr_dim_hidden, inr_dim_out, inr_num_layers, compute_dtype=torch.float32)
+        >>> x = torch.tensor(np.random.rand(16, 100, 2), dtype=torch.float32)
         >>> out = siren(x)
         >>> print(out.shape)
         (16, 100, 1)
@@ -63,7 +62,7 @@ class Siren(nn.Cell):
             omega0_initial: float = 30.0,
             weight_scale: float = 6.0,
             num_pos_enc: int = 0,
-            compute_dtype=mstype.float16) -> None:
+            compute_dtype=torch.float16) -> None:
         super().__init__()
 
         self.num_layers = num_layers
@@ -84,29 +83,29 @@ class Siren(nn.Cell):
         layers = []
         for idx in range(num_layers - 1):
             if idx == 0:  # first layer
-                layers.append(nn.Dense(ext_dim_in, dim_hidden, has_bias=True).to_float(compute_dtype))
+                layers.append(nn.Linear(ext_dim_in, dim_hidden, bias=True).to(dtype=compute_dtype))
                 w_std = 1 / ext_dim_in
-                layers[-1].weight.set_data(initializer(Uniform(w_std), layers[-1].weight.shape, compute_dtype))
-                layers[-1].bias.set_data(initializer(Uniform(w_std), layers[-1].bias.shape, compute_dtype))
+                nn.init.uniform_(layers[-1].weight, -w_std, w_std)
+                nn.init.uniform_(layers[-1].bias, -w_std, w_std)
                 acts.append(Sine(omega0_initial))
             else:
-                layers.append(nn.Dense(dim_hidden, dim_hidden, has_bias=True).to_float(compute_dtype))
+                layers.append(nn.Linear(dim_hidden, dim_hidden, bias=True).to(dtype=compute_dtype))
                 w_std = math.sqrt(weight_scale / dim_hidden) / omega0
-                layers[-1].weight.set_data(initializer(Uniform(w_std), layers[-1].weight.shape, compute_dtype))
-                layers[-1].bias.set_data(initializer(Uniform(w_std), layers[-1].bias.shape, compute_dtype))
+                nn.init.uniform_(layers[-1].weight, -w_std, w_std)
+                nn.init.uniform_(layers[-1].bias, -w_std, w_std)
                 acts.append(Sine(omega0))
-        self.layers = nn.CellList(layers)
-        self.acts = nn.CellList(acts)
+        self.layers = nn.ModuleList(layers)
+        self.acts = nn.ModuleList(acts)
 
-        self.last_layer = nn.Dense(dim_hidden, dim_out, has_bias=True).to_float(compute_dtype)
+        self.last_layer = nn.Linear(dim_hidden, dim_out, bias=True).to(dtype=compute_dtype)
         w_std = math.sqrt(weight_scale / dim_hidden) / omega0
-        self.last_layer.weight.set_data(initializer(Uniform(w_std), self.last_layer.weight.shape, compute_dtype))
-        self.last_layer.bias.set_data(initializer(Uniform(w_std), self.last_layer.bias.shape, compute_dtype))
+        nn.init.uniform_(self.last_layer.weight, -w_std, w_std)
+        nn.init.uniform_(self.last_layer.bias, -w_std, w_std)
 
-    def construct(self,
-                  x: Tensor,
-                  scale_modulations: Optional[Tensor] = None,
-                  shift_modulations: Optional[Tensor] = None) -> Tensor:
+    def forward(self,
+                x: Tensor,
+                scale_modulations: Optional[Tensor] = None,
+                shift_modulations: Optional[Tensor] = None) -> Tensor:
         '''
         Args:
             x (Tensor): shape is [bsz, n_pts, dim_in].
@@ -117,12 +116,12 @@ class Siren(nn.Cell):
             if scale_modulations is None:
                 scale = 1.
             else:
-                scale = 1. + scale_modulations[layer_idx].expand_dims(1)  # [batch_size, 1, dim_hidden]
+                scale = 1. + scale_modulations[layer_idx].unsqueeze(1)  # [batch_size, 1, dim_hidden]
 
             if shift_modulations is None:
                 shift = 0.
             else:
-                shift = shift_modulations[layer_idx].expand_dims(1)  # [batch_size, 1, dim_hidden]
+                shift = shift_modulations[layer_idx].unsqueeze(1)  # [batch_size, 1, dim_hidden]
 
             residual = x
             x = self.layers[layer_idx](x)  # [batch_size, num_points, dim_hidden]
@@ -137,7 +136,7 @@ class Siren(nn.Cell):
         return out
 
 
-class SirenWithHypernet(nn.Cell):
+class SirenWithHypernet(nn.Module):
     r"""
     SIREN with hypernets.
 
@@ -155,7 +154,7 @@ class SirenWithHypernet(nn.Cell):
             Default: ``False``, only generate shift modulations.
         num_pos_enc (int, optional): Number of positional embedding frequencies for the coordinate input.
             Default: ``0``.
-        compute_dtype (ms.dtype, optional): Floating point data type of the network. Default: ``ms.dtype.float16``.
+        compute_dtype (torch.dtype, optional): Floating point data type of the network. Default: ``torch.float16``.
 
     Inputs:
         - **coordinate** (Tensor) - Tensor of shape :math:`(batch\_size, num\_points, dim\_in)`.
@@ -165,11 +164,11 @@ class SirenWithHypernet(nn.Cell):
         Tensor of shape :math:`(batch\_size, num\_points, dim\_out)`.
 
     Supported Platforms:
-        ``Ascend`` ``GPU``
+        ``CPU`` ``CUDA``
 
     Examples:
-        >>> import mindspore as ms
-        >>> from mindspore import nn
+        >>> import torch
+        >>> from torch import nn
         >>> from src.cell.pdeformer.inr.siren import SirenWithHypernet
         >>> inr_dim_in = 2
         >>> inr_dim_out = 1
@@ -180,11 +179,11 @@ class SirenWithHypernet(nn.Cell):
         >>> hyper_num_layers = 2
         >>> siren_with_hypernet = SirenWithHypernet(inr_dim_in, inr_dim_out, inr_dim_hidden, inr_num_layers,
         >>>                                         hyper_dim_in, hyper_dim_hidden, hyper_num_layers,
-        >>>                                         enable_scale=True, compute_dtype=ms.float32)
+        >>>                                         enable_scale=True, compute_dtype=torch.float32)
         >>> bsz = 16
         >>> n_pts = 100
-        >>> coordinate = ms.Tensor(np.random.rand(bsz, n_pts, 2), ms.float32)
-        >>> hyper_in = ms.Tensor(np.random.rand(inr_num_layers - 1, bsz, hyper_dim_in), ms.float32)
+        >>> coordinate = torch.tensor(np.random.rand(bsz, n_pts, 2), dtype=torch.float32)
+        >>> hyper_in = torch.tensor(np.random.rand(inr_num_layers - 1, bsz, hyper_dim_in), dtype=torch.float32)
         >>> out = siren_with_hypernet(coordinate, hyper_in)
         >>> print(out.shape)
         (16, 100, 1)
@@ -202,7 +201,7 @@ class SirenWithHypernet(nn.Cell):
             share_hypernet: bool = True,
             enable_scale: bool = False,
             num_pos_enc: int = 0,
-            compute_dtype=mstype.float16) -> None:
+            compute_dtype=torch.float16) -> None:
         super().__init__()
         self.inr_num_layers = inr_num_layers
         self.enable_scale = enable_scale
@@ -229,14 +228,14 @@ class SirenWithHypernet(nn.Cell):
                 self.scale_modulation_encoder = new_hypernet_mlp()
         else:
             num_hypernet = inr_num_layers - 1  # the number of hidden layers
-            self.shift_modulation_encoders = nn.CellList([
+            self.shift_modulation_encoders = nn.ModuleList([
                 new_hypernet_mlp() for _ in range(num_hypernet)])
             if self.enable_scale:
-                self.scale_modulation_encoders = nn.CellList([
+                self.scale_modulation_encoders = nn.ModuleList([
                     new_hypernet_mlp() for _ in range(num_hypernet)])
 
-    def construct(self, coordinate: Tensor, hyper_in: Tensor) -> Tensor:
-        r"""construct"""
+    def forward(self, coordinate: Tensor, hyper_in: Tensor) -> Tensor:
+        r"""forward"""
         if self.enable_scale:
             scale_modulations = []
             for idx in range(self.inr_num_layers - 1):
@@ -247,7 +246,7 @@ class SirenWithHypernet(nn.Cell):
                     encoder_out = self.scale_modulation_encoders[idx](encoder_in)
                 scale_modulations.append(encoder_out)
 
-            scale_modulations = ops.stack(scale_modulations, axis=0)  # [inr_num_layers - 1, n_graph, embed_dim]
+            scale_modulations = torch.stack(scale_modulations, dim=0)  # [inr_num_layers - 1, n_graph, embed_dim]
         else:
             scale_modulations = None
 
@@ -260,7 +259,7 @@ class SirenWithHypernet(nn.Cell):
                 encoder_out = self.shift_modulation_encoders[idx](encoder_in)
             shift_modulations.append(encoder_out)
 
-        shift_modulations = ops.stack(shift_modulations, axis=0)  # [inr_num_layers - 1, n_graph, embed_dim]
+        shift_modulations = torch.stack(shift_modulations, dim=0)  # [inr_num_layers - 1, n_graph, embed_dim]
 
         out = self.inr(coordinate, scale_modulations, shift_modulations)  # [n_graph, num_points, dim_out]
         return out

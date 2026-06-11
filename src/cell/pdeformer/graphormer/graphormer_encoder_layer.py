@@ -1,15 +1,15 @@
 r"""Graphormer encoder layer."""
 from typing import Optional
 
-from mindspore import dtype as mstype
-from mindspore import Tensor, nn
+import torch
+from torch import Tensor, nn
 
 from ...basic_block import UniformInitDense
 from .multihead_attention import MultiheadAttention
 from ...env import ENABLE_DROPOUT
 
 
-def get_activation_fn(activation_fn: str = "gelu") -> nn.Cell:
+def get_activation_fn(activation_fn: str = "gelu") -> nn.Module:
     r"""Get activation function."""
     if activation_fn.lower() == "relu":
         return nn.ReLU()
@@ -18,7 +18,7 @@ def get_activation_fn(activation_fn: str = "gelu") -> nn.Cell:
     raise NotImplementedError
 
 
-class GraphormerEncoderLayer(nn.Cell):
+class GraphormerEncoderLayer(nn.Module):
     r"""
     Basic module in Transformer encoder, including multihead-attention (MHA)
     and feed-forward-network (FFN).
@@ -33,7 +33,7 @@ class GraphormerEncoderLayer(nn.Cell):
         activation_fn (str): The activation function in FFN. Default: ``"gelu"``.
         pre_layernorm (bool): LayerNorm is applied either before or after the self-attention/ffn
             modules. Default: ``False``.
-        compute_dtype (mstype.Float): The computation type of the layer. Default: ``mstype.float16``.
+        compute_dtype (torch.dtype): The computation type of the layer. Default: ``torch.float16``.
 
     Inputs:
         - **x** (Tensor) - Tensor of shape :math:`(n\_node, n\_graph, embed\_dim)`.
@@ -48,16 +48,16 @@ class GraphormerEncoderLayer(nn.Cell):
         Tensor of shape :math:`(n\_node, n\_graph, embed\_dim)`.
 
     Supported Platforms:
-        ``Ascend`` ``GPU``
+        ``CPU`` ``CUDA``
 
     Examples:
         >>> import numpy as np
-        >>> from mindspore import Tensor
+        >>> import torch
         >>> from src.cell.pdeformer.graphormer.graphormer_encoder_layer import GraphormerEncoderLayer
-        >>> x = Tensor(np.random.randn(16, 32, 768), mstype.float32)
+        >>> x = torch.tensor(np.random.randn(16, 32, 768), dtype=torch.float32)
         >>> encoder_layer = GraphormerEncoderLayer(embed_dim=768, ffn_embed_dim=3072, num_heads=8, dropout=0.1,
         >>>                                       attention_dropout=0.1, activation_dropout=0.1, activation_fn="gelu",
-        >>>                                       pre_layernorm=False, compute_dtype=mstype.float16)
+        >>>                                       pre_layernorm=False, compute_dtype=torch.float16)
         >>> output = encoder_layer(x)
         >>> print(output.shape)
         (16, 32, 768)
@@ -73,7 +73,7 @@ class GraphormerEncoderLayer(nn.Cell):
             activation_dropout: float = 0.1,
             activation_fn: str = "gelu",
             pre_layernorm: bool = False,
-            compute_dtype=mstype.float16) -> None:
+            compute_dtype=torch.float16) -> None:
         super().__init__()
         self.embed_dim = embed_dim
         self.ffn_embed_dim = ffn_embed_dim
@@ -90,18 +90,18 @@ class GraphormerEncoderLayer(nn.Cell):
             dropout=attention_dropout,
             compute_dtype=compute_dtype
         )
-        self.attn_layer_norm = nn.LayerNorm([embed_dim], epsilon=1e-5).to_float(mstype.float32)
-        self.fc1 = UniformInitDense(embed_dim, ffn_embed_dim, has_bias=True).to_float(compute_dtype)
-        self.fc2 = UniformInitDense(ffn_embed_dim, embed_dim, has_bias=True).to_float(compute_dtype)
-        self.ffn_layer_norm = nn.LayerNorm([embed_dim], epsilon=1e-5).to_float(mstype.float32)
+        self.attn_layer_norm = nn.LayerNorm(embed_dim, eps=1e-5)
+        self.fc1 = UniformInitDense(embed_dim, ffn_embed_dim, has_bias=True).to(dtype=compute_dtype)
+        self.fc2 = UniformInitDense(ffn_embed_dim, embed_dim, has_bias=True).to(dtype=compute_dtype)
+        self.ffn_layer_norm = nn.LayerNorm(embed_dim, eps=1e-5)
 
-    def construct(
+    def forward(
             self,
             x: Tensor,
             attn_bias: Optional[Tensor] = None,
             attn_mask: Optional[Tensor] = None,
             attn_padding_mask: Optional[Tensor] = None) -> Tensor:
-        r"""construct"""
+        r"""forward"""
         residual = x  # [n_node, n_graph, embed_dim]
         if self.pre_layernorm:
             x = self.attn_layer_norm(x)  # [n_node, n_graph, embed_dim]

@@ -7,6 +7,5 @@ model:
     ffn_embed_dim: 1024
   inr:
     dim_hidden: 128
-  load_ckpt: path/to/your/downloaded/model-S.ckpt
-  # You can download from https://ai.gitee.com/functoreality/PDEformer2-S/blob/master/model-S.ckpt
-  # or data-download.obs.cn-northeast-227.dlaicc.com/checkpoints/release/pdeformer2-small.ckpt
+  load_ckpt: none
+  # Set to path/to/model-S.pt or another torch state_dict checkpoint path.

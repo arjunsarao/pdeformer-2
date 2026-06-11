@@ -2,13 +2,13 @@ r"""PolyINR model."""
 import math
 from typing import Optional, Tuple
 
-from mindspore import dtype as mstype
-from mindspore import Tensor, nn, ops
+import torch
+from torch import Tensor, nn
 
 from ...basic_block import MLP, UniformInitDense, Scale, Sine
 
 
-class Clamp(nn.Cell):
+class Clamp(nn.Module):
     """Crop values within a fixed range."""
 
     def __init__(self, threshold=256.) -> None:
@@ -17,12 +17,12 @@ class Clamp(nn.Cell):
             raise ValueError(f"'threshold' ({threshold}) should be positive.")
         self.threshold = threshold
 
-    def construct(self, x: Tensor) -> Tensor:
-        r"""construct"""
-        return ops.clamp(x, min=-self.threshold, max=self.threshold)
+    def forward(self, x: Tensor) -> Tensor:
+        r"""forward"""
+        return torch.clamp(x, min=-self.threshold, max=self.threshold)
 
 
-class PolyINR(nn.Cell):
+class PolyINR(nn.Module):
     r"""
     PolyINR is a implicit neural representation (INR) architecture.
     For details, please refer to paper: https://arxiv.org/abs/2303.11424
@@ -32,7 +32,7 @@ class PolyINR(nn.Cell):
         dim_out (int): Dimension of the output features.
         dim_hidden (int): Dimension of the hidden features.
         num_layers (int): Number of layers.
-        compute_dtype (mstype.Float): The computation type of the layer. Default: ``mstype.float16``.
+        compute_dtype (torch.dtype): The computation type of the layer. Default: ``torch.float16``.
 
     Inputs:
         - **x** (Tensor) - Tensor of shape :math:`(batch\_size, num\_points, dim\_in)`.
@@ -44,10 +44,10 @@ class PolyINR(nn.Cell):
 
     Examples:
         >>> import numpy as np
-        >>> from mindspore import Tensor, nn
+        >>> import torch
         >>> from src.cell.pdeformer.function_encoder import PolyINR
-        >>> x = Tensor(np.random.randn(2, 10, 3), mstype.float32)
-        >>> poly_inr = PolyINR(3, 64, 128, 2, compute_dtype=mstype.float32)
+        >>> x = torch.tensor(np.random.randn(2, 10, 3), dtype=torch.float32)
+        >>> poly_inr = PolyINR(3, 64, 128, 2, compute_dtype=torch.float32)
         >>> out = poly_inr(x)
         >>> print(out.shape)
         (2, 10, 64)
@@ -61,7 +61,7 @@ class PolyINR(nn.Cell):
                  modify_he_init: bool = False,
                  activation_fn: str = "lrelu",
                  affine_act_fn: str = "identity",
-                 compute_dtype=mstype.float16) -> None:
+                 compute_dtype=torch.float16) -> None:
         super().__init__()
         self.num_layers = num_layers
         self.compute_dype = compute_dtype
@@ -93,7 +93,7 @@ class PolyINR(nn.Cell):
                 scale = None
                 bias_scale = None
         elif affine_act_fn in ["lrelu", "leakyrelu"]:
-            self.affine_act = nn.SequentialCell(nn.LeakyReLU(0.2), Clamp(256.))
+            self.affine_act = nn.Sequential(nn.LeakyReLU(0.2), Clamp(256.))
             if modify_he_init:
                 # assume the input is 2D in space (z is fixed), range is [0, 1] * [0, 1]
                 tau = math.log(2) # range of output variance conditioned on fixed (t, x, y) is [exp(-tau), exp(tau)]
@@ -105,7 +105,7 @@ class PolyINR(nn.Cell):
                 scale = None
                 bias_scale = None
         elif affine_act_fn in ["sin", "sine"]:
-            self.affine_act = nn.SequentialCell(Sine(1.0), Scale(math.sqrt(2.0)))
+            self.affine_act = nn.Sequential(Sine(1.0), Scale(math.sqrt(2.0)))
             if modify_he_init:
                 scale = math.sqrt(6.0 / (dim_in - 1))
                 bias_scale = math.pi
@@ -115,15 +115,15 @@ class PolyINR(nn.Cell):
         else:
             raise ValueError(f"Unknown 'affine_act_fn' {affine_act_fn}.")
 
-        self.affines = nn.CellList([UniformInitDense(dim_in, dim_hidden, scale=scale, bias_scale=bias_scale,
-                                                     modify_he_init=modify_he_init).to_float(compute_dtype)
-                                    for _ in range(num_layers - 1)])
+        self.affines = nn.ModuleList([UniformInitDense(dim_in, dim_hidden, scale=scale, bias_scale=bias_scale,
+                                                       modify_he_init=modify_he_init).to(dtype=compute_dtype)
+                                      for _ in range(num_layers - 1)])
 
         """
         def log_normal(size, dtype):  # log|v| roughly [1e-1,10]
             sign = np.random.choice([-1, 1], size=size)
             val = np.random.normal(loc=0, scale=1, size=size)
-            return Tensor(sign * np.exp(val), dtype=dtype)
+            return torch.tensor(sign * np.exp(val), dtype=dtype)
         for net in self.affines:
             net.weight.set_data(log_normal(net.weight.shape, net.weight.dtype))
         """
@@ -131,28 +131,28 @@ class PolyINR(nn.Cell):
         # activation function
         activation_fn = activation_fn.lower()
         if activation_fn in ["lrelu", "leakyrelu"]:
-            self.act = nn.SequentialCell(nn.LeakyReLU(0.2), Clamp(256.))
+            self.act = nn.Sequential(nn.LeakyReLU(0.2), Clamp(256.))
         elif activation_fn in ["sin", "sine"]:
-            self.act = ops.sin
+            self.act = torch.sin
         else:
             raise ValueError(f"Unknown 'activation_fn' {activation_fn}.")
 
         # linear layers
-        self.dense_layers = nn.CellList([
+        self.dense_layers = nn.ModuleList([
             UniformInitDense(dim_hidden, dim_hidden, modify_he_init=modify_he_init,
-                             neg_slope=0.2).to_float(compute_dtype)
+                             neg_slope=0.2).to(dtype=compute_dtype)
             for _ in range(num_layers - 1)])
         self.last_layer = UniformInitDense(
             dim_hidden, dim_out, modify_he_init=modify_he_init,
-            neg_slope=1.0).to_float(compute_dtype)
+            neg_slope=1.0).to(dtype=compute_dtype)
 
-    def construct(self,
-                  x: Tensor,  # [bsz, num_points, dim_in]
-                  affine_modulations: Optional[Tensor] = None,  # [num_layers-1, bsz, dim_in+1, dim_hidden]
-                  scale_modulations: Optional[Tensor] = None,  # [num_layers-1, bsz, dim_hidden]
-                  shift_modulations: Optional[Tensor] = None,  # [num_layers-1, bsz, dim_hidden]
-                  ) -> Tensor:
-        r"""construct"""
+    def forward(self,
+                x: Tensor,  # [bsz, num_points, dim_in]
+                affine_modulations: Optional[Tensor] = None,  # [num_layers-1, bsz, dim_in+1, dim_hidden]
+                scale_modulations: Optional[Tensor] = None,  # [num_layers-1, bsz, dim_hidden]
+                shift_modulations: Optional[Tensor] = None,  # [num_layers-1, bsz, dim_hidden]
+                ) -> Tensor:
+        r"""forward"""
         hidden_state = 1.
         # x = self.cast_inputs((x,), self.compute_dtype)
 
@@ -162,18 +162,18 @@ class PolyINR(nn.Cell):
             if scale_modulations is None:
                 scale = 1.0
             else:
-                scale = 1. + scale_modulations[layer_idx].expand_dims(1)  # [bsz, 1, dim_hidden]
+                scale = 1. + scale_modulations[layer_idx].unsqueeze(1)  # [bsz, 1, dim_hidden]
 
             if shift_modulations is None:
                 shift = 0.0
             else:
-                shift = shift_modulations[layer_idx].expand_dims(1)  # [bsz, 1, dim_hidden]
+                shift = shift_modulations[layer_idx].unsqueeze(1)  # [bsz, 1, dim_hidden]
 
             tmp = self.affine_act(self.affines[layer_idx](x))  # [bsz, n_pts, dim_hidden]
             if affine_modulations is not None:
                 # aff_mat = affine_modulations[layer_idx]
-                # tmp2 = ops.matmul(x, aff_mat[:, :-1, :]) + aff_mat[:, -1, :]  # [bsz, n_pts, dim_hidden]
-                tmp2 = ops.matmul(x_pad, affine_modulations[layer_idx])  # [bsz, n_pts, dim_hidden]
+                # tmp2 = torch.matmul(x, aff_mat[:, :-1, :]) + aff_mat[:, -1, :]  # [bsz, n_pts, dim_hidden]
+                tmp2 = torch.matmul(x_pad, affine_modulations[layer_idx])  # [bsz, n_pts, dim_hidden]
                 tmp = tmp + tmp2  # [bsz, n_pts, dim_hidden]
             hidden_state = hidden_state * tmp  # [bsz, n_pts, dim_hidden]
             hidden_state = self.dense_layers[layer_idx](hidden_state)  # [bsz, n_pts, dim_hidden]
@@ -184,7 +184,7 @@ class PolyINR(nn.Cell):
         return out
 
 
-class PolyINRWithHypernet(nn.Cell):
+class PolyINRWithHypernet(nn.Module):
     r"""
     Poly-INR model with hypernets.
     The original version proposed in paper https://arxiv.org/abs/2303.11424 contains
@@ -208,8 +208,8 @@ class PolyINRWithHypernet(nn.Cell):
             of the PolyINR network. Default: ``False``.
         enable_scale (bool, optional): Whether to introduce scale modulations
             of the PolyINR network. Default: ``False``.
-        compute_dtype (ms.dtype, optional): Floating point data type of the
-            network. Default: ``ms.dtype.float16``.
+        compute_dtype (torch.dtype, optional): Floating point data type of the
+            network. Default: ``torch.float16``.
 
     Inputs:
         - **coordinate** (Tensor) - Tensor of shape :math:`(batch\_size, num\_points, dim\_in)`.
@@ -219,11 +219,11 @@ class PolyINRWithHypernet(nn.Cell):
         Tensor of shape :math:`(batch\_size, num\_points, dim\_out)`.
 
     Supported Platforms:
-        ``Ascend`` ``GPU``
+        ``CPU`` ``CUDA``
 
     Examples:
         >>> import numpy as np
-        >>> from mindspore import Tensor, nn
+        >>> import torch
         >>> from src.cell.pdeformer.function_encoder import PolyINRWithHypernet
         >>> inr_dim_in = 2
         >>> inr_dim_out = 1
@@ -234,11 +234,11 @@ class PolyINRWithHypernet(nn.Cell):
         >>> hyper_num_layers = 2
         >>> poly_inr = PolyINRWithHypernet(inr_dim_in, inr_dim_out, inr_dim_hidden, inr_num_layers,
         >>>                                hyper_dim_in, hyper_dim_hidden, hyper_num_layers,
-        >>>                                True, True, True, True, mstype.float32)
+        >>>                                True, True, True, True, torch.float32)
         >>> bsz = 32
         >>> n_pts = 128
-        >>> coord = Tensor(np.random.randn(bsz, n_pts, inr_dim_in), mstype.float32)
-        >>> hyper_in = Tensor(np.random.randn(inr_num_layers - 1, bsz, hyper_dim_in), mstype.float32)
+        >>> coord = torch.tensor(np.random.randn(bsz, n_pts, inr_dim_in), dtype=torch.float32)
+        >>> hyper_in = torch.tensor(np.random.randn(inr_num_layers - 1, bsz, hyper_dim_in), dtype=torch.float32)
         >>> out = poly_inr(coord, hyper_in)
         >>> print(out.shape)
         (32, 128, 1)
@@ -260,7 +260,7 @@ class PolyINRWithHypernet(nn.Cell):
             modify_he_init: bool = False,
             activation_fn: str = "lrelu",
             affine_act_fn: str = "identity",
-            compute_dtype=mstype.float16) -> None:
+            compute_dtype=torch.float16) -> None:
         super().__init__()
         self.inr_num_layers = inr_num_layers
         self.enable_affine = enable_affine
@@ -307,13 +307,13 @@ class PolyINRWithHypernet(nn.Cell):
         else:
             num_hypernet = inr_num_layers - 1  # the number of hidden layers
             if self.enable_affine:
-                self.affine_hypernets = nn.CellList([
+                self.affine_hypernets = nn.ModuleList([
                     new_hypernet_mlp('affine') for _ in range(num_hypernet)])
             if self.enable_shift:
-                self.shift_hypernets = nn.CellList([
+                self.shift_hypernets = nn.ModuleList([
                     new_hypernet_mlp('shift') for _ in range(num_hypernet)])
             if self.enable_scale:
-                self.scale_hypernets = nn.CellList([
+                self.scale_hypernets = nn.ModuleList([
                     new_hypernet_mlp('scale') for _ in range(num_hypernet)])
 
     def get_modulations(self, hyper_in: Tensor) -> Tuple[Tensor]:
@@ -330,7 +330,7 @@ class PolyINRWithHypernet(nn.Cell):
 
             # tensor shape [inr_num_layers - 1, n_graph, (dim_in + 1) * inr_dim_hidden]
             # -> [inr_num_layers - 1, n_graph, dim_in + 1, inr_dim_hidden]
-            affine_modulations = ops.stack(affine_modulations, axis=0).view(self.affine_modulations_shape)
+            affine_modulations = torch.stack(affine_modulations, dim=0).reshape(self.affine_modulations_shape)
         else:
             affine_modulations = None
 
@@ -344,7 +344,7 @@ class PolyINRWithHypernet(nn.Cell):
                     encoder_out = self.shift_hypernets[idx](encoder_in)
                 shift_modulations.append(encoder_out)
 
-            shift_modulations = ops.stack(shift_modulations, axis=0)  # [inr_num_layers - 1, n_graph, inr_dim_hidden]
+            shift_modulations = torch.stack(shift_modulations, dim=0)  # [inr_num_layers - 1, n_graph, inr_dim_hidden]
         else:
             shift_modulations = None
 
@@ -358,14 +358,14 @@ class PolyINRWithHypernet(nn.Cell):
                     encoder_out = self.scale_hypernets[idx](encoder_in)
                 scale_modulations.append(encoder_out)
 
-            scale_modulations = ops.stack(scale_modulations, axis=0)  # [inr_num_layers - 1, n_graph, inr_dim_hidden]
+            scale_modulations = torch.stack(scale_modulations, dim=0)  # [inr_num_layers - 1, n_graph, inr_dim_hidden]
         else:
             scale_modulations = None
 
         return affine_modulations, scale_modulations, shift_modulations
 
-    def construct(self, coordinate: Tensor, hyper_in: Tensor) -> Tensor:
-        r"""construct"""
+    def forward(self, coordinate: Tensor, hyper_in: Tensor) -> Tensor:
+        r"""forward"""
         modulations = self.get_modulations(hyper_in)
         affine_modulations, scale_modulations, shift_modulations = modulations
 

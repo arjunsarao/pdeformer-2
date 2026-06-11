@@ -1,7 +1,7 @@
 r"""Wrapper of INRs with hypernet."""
 from omegaconf import DictConfig
-from mindspore import dtype as mstype
-from mindspore import nn
+import torch
+from torch import nn
 
 from .siren import SirenWithHypernet
 from .mfn import MFNNetWithHypernet
@@ -12,7 +12,7 @@ def get_inr_with_hypernet(config_model: DictConfig,
                           dim_in: int = 1,
                           dim_out: int = 1,
                           inr_base: bool = True,
-                          compute_dtype=mstype.float16) -> nn.Cell:
+                          compute_dtype=torch.float16) -> nn.Module:
     r"""
     INR with hypernet is used for representing the solution of the PDE at each
     point. It consists of an INR and a Hypernet. The Hypernet takes the PDE
@@ -24,8 +24,8 @@ def get_inr_with_hypernet(config_model: DictConfig,
         config_model (Dict): Configurations.
         dim_in (int): Dimension of INR input coordinates. Default: 1.
         dim_out (int): Dimension of INR outputs. Default: 1.
-        compute_dtype (mstype.Float): The computation type of the layer.
-            Default: ``mstype.float16``.
+        compute_dtype (torch.dtype): The computation type of the layer.
+            Default: ``torch.float16``.
         inr_base (bool): Whether it is the base inr of the model, as pdeformer
             may include multiple inrs for decoding.
 
@@ -40,7 +40,7 @@ def get_inr_with_hypernet(config_model: DictConfig,
             :math:`(n\_graph, num\_points, dim\_out)`.
 
     Supported Platforms:
-        ``Ascend`` ``GPU``  ``CPU``
+        ``CPU`` ``CUDA``  ``CPU``
     """
     if inr_base:
         config_inr = config_model.inr

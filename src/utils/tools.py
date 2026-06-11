@@ -5,14 +5,13 @@ import numpy as np
 from numpy.typing import NDArray
 import matplotlib.pyplot as plt
 
-from mindspore import nn
+from torch import nn
 
 
-def calculate_num_params(model: nn.Cell) -> str:
+def calculate_num_params(model: nn.Module) -> str:
     r"""Calculate the number of parameters."""
-    num_params = 0
-    for param in model.trainable_params():
-        num_params += np.prod(param.shape)
+    num_params = sum(param.numel() for param in model.parameters()
+                     if param.requires_grad)
 
     if num_params < 1000:
         num_str = str(num_params)

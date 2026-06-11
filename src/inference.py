@@ -5,7 +5,7 @@ import numpy as np
 from numpy.typing import NDArray
 from scipy.interpolate import RegularGridInterpolator
 import matplotlib.pyplot as plt
-from mindspore import Tensor
+import torch
 
 from src.cell import PDEformer
 from src.data.pde_dag import PDEAsDAG
@@ -21,16 +21,29 @@ def inference_pde(model: PDEformer,
     Input txyz_coord has shape [..., 4], output has shape [..., n_vars].
     """
     coordinate = txyz_coord.astype(np.float32).reshape((-1, 4))
+    try:
+        first_param = next(model.parameters())
+        device = first_param.device
+        model_dtype = first_param.dtype
+    except StopIteration:
+        device = torch.device("cpu")
+        model_dtype = torch.float32
 
     def as_tensor(array):
-        return Tensor(array).expand_dims(0)  # [*] -> [1, *]
+        tensor = torch.as_tensor(array, device=device)
+        if tensor.is_floating_point():
+            tensor = tensor.to(dtype=model_dtype)
+        else:
+            tensor = tensor.to(dtype=torch.long)
+        return tensor.unsqueeze(0)  # [*] -> [1, *]
 
     # inference the first PDE component
-    pred = model(as_tensor(pde_dag.node_type), as_tensor(pde_dag.node_scalar),
-                 as_tensor(pde_dag.node_function), as_tensor(pde_dag.in_degree),
-                 as_tensor(pde_dag.out_degree), as_tensor(pde_dag.attn_bias),
-                 as_tensor(pde_dag.spatial_pos), as_tensor(coordinate))
-    pred = pred.asnumpy().astype(np.float32)  # [1, n_pts, 1]
+    with torch.no_grad():
+        pred = model(as_tensor(pde_dag.node_type), as_tensor(pde_dag.node_scalar),
+                     as_tensor(pde_dag.node_function), as_tensor(pde_dag.in_degree),
+                     as_tensor(pde_dag.out_degree), as_tensor(pde_dag.attn_bias),
+                     as_tensor(pde_dag.spatial_pos), as_tensor(coordinate))
+    pred = pred.detach().cpu().numpy().astype(np.float32)  # [1, n_pts, 1]
 
     # multi-component case, inference the rest components
     if pde_dag.n_vars > 1:
@@ -38,12 +51,13 @@ def inference_pde(model: PDEformer,
         # iterate over all remaining components
         for idx_var in range(1, pde_dag.n_vars):
             spatial_pos, attn_bias = pde_dag.get_spatial_pos_attn_bias(idx_var)
-            pred = model(
-                as_tensor(pde_dag.node_type), as_tensor(pde_dag.node_scalar),
-                as_tensor(pde_dag.node_function), as_tensor(pde_dag.in_degree),
-                as_tensor(pde_dag.out_degree), as_tensor(attn_bias),
-                as_tensor(spatial_pos), as_tensor(coordinate))
-            pred = pred.asnumpy().astype(np.float32)  # [1, n_pts, 1]
+            with torch.no_grad():
+                pred = model(
+                    as_tensor(pde_dag.node_type), as_tensor(pde_dag.node_scalar),
+                    as_tensor(pde_dag.node_function), as_tensor(pde_dag.in_degree),
+                    as_tensor(pde_dag.out_degree), as_tensor(attn_bias),
+                    as_tensor(spatial_pos), as_tensor(coordinate))
+            pred = pred.detach().cpu().numpy().astype(np.float32)  # [1, n_pts, 1]
             pred_all.append(pred)
         pred = np.concatenate(pred_all, axis=-1)  # [1, n_pts, n_vars]
 

@@ -45,11 +45,10 @@ The example shown in the following figure demonstrates the way of using computat
 
 ## Installation
 
-Please first make sure that MindSpore is successfully installed, as instructed in the [Installation Tutorial](https://www.mindspore.cn/install).
-Other dependencies can be installed using the following command:
+Install the project dependencies, including PyTorch, with:
 
 ```bash
-pip3 install -r pip-requirements.txt
+pip install -e .
 ```
 
 This repository is scoped to inference, documentation, UI helpers, and visualization. Training, fine-tuning, pretraining, dataset preprocessing, and inverse-problem runners are intentionally omitted.
@@ -61,17 +60,13 @@ The details are as follows:
 
 | Model | Parameters | Configuration File | Checkpoint File |
 | ---- | ---- | ---- | ---- |
-| PDEformer-2-base | 82.65M | [configs/inference/model-L.yaml](configs/inference/model-L.yaml) | [model-L.ckpt](https://ai.gitee.com/functoreality/PDEformer2-L/blob/master/model-L.ckpt) |
-| PDEformer-2-fast | 71.07M | [configs/inference/model-M.yaml](configs/inference/model-M.yaml) | [model-M.ckpt](https://ai.gitee.com/functoreality/PDEformer2-M/blob/master/model-M.ckpt) |
-| PDEformer-2-small | 27.75M | [configs/inference/model-S.yaml](configs/inference/model-S.yaml) | [model-S.ckpt](https://ai.gitee.com/functoreality/PDEformer2-S/blob/master/model-S.ckpt) |
+| PDEformer-2-base | 82.65M | [configs/inference/model-L.yaml](configs/inference/model-L.yaml) | `model-L.pt` PyTorch state dict |
+| PDEformer-2-fast | 71.07M | [configs/inference/model-M.yaml](configs/inference/model-M.yaml) | `model-M.pt` PyTorch state dict |
+| PDEformer-2-small | 27.75M | [configs/inference/model-S.yaml](configs/inference/model-S.yaml) | `model-S.pt` PyTorch state dict |
 
-The checkpoints (model weights) can be also downloaded using the following commands:
-
-```bash
-wget -c data-download.obs.cn-northeast-227.dlaicc.com/checkpoints/release/pdeformer2-base.ckpt
-wget -c data-download.obs.cn-northeast-227.dlaicc.com/checkpoints/release/pdeformer2-fast.ckpt
-wget -c data-download.obs.cn-northeast-227.dlaicc.com/checkpoints/release/pdeformer2-small.ckpt
-```
+The model factory now loads PyTorch checkpoints with `torch.load` and `load_state_dict`.
+Set `model.load_ckpt` to a PyTorch `state_dict` file, or to `none` to instantiate the model without weights.
+Native MindSpore `.ckpt` files need to be converted before they can be loaded by this PyTorch build.
 
 PDEformer-2-small (i.e., the S model) is only provided for users requiring faster inference.
 We have not evaluate its performance systematically.
@@ -80,17 +75,14 @@ We have not evaluate its performance systematically.
 
 The example code below demonstrates how to use PDEformer-2 to predict the solution of a given PDE,
 taking the nonlinear conservation law $u_{t}+(u^2)_x+(-0.3u)_y=0$ (with periodic boundary conditions) as the example.
-Before running, it is necessary to download the pretrained PDEformer-2-fast weights `model-M.ckpt` from [Gitee AI](https://ai.gitee.com/functoreality/PDEformer2-M/blob/master/model-M.ckpt),
-and change the value of the `model.load_ckpt` entry in [configs/inference/model-M.yaml](configs/inference/model-M.yaml) to the path of the corresponding weight file.
+Before running with pretrained weights, convert the original PDEformer-2-fast release weights to a PyTorch state dict and change the value of the `model.load_ckpt` entry in [configs/inference/model-M.yaml](configs/inference/model-M.yaml) to the path of the corresponding `.pt` file.
 
 ```python
 import numpy as np
-from mindspore import context
 from src import load_config, get_model, PDENodesCollector
 from src.inference import infer_plot_2d, x_fenc, y_fenc
 
 # Basic Settings
-context.set_context(mode=context.PYNATIVE_MODE, device_target="CPU")
 config = load_config("configs/inference/model-M.yaml")
 model = get_model(config)
 
@@ -114,7 +106,7 @@ For more examples, please refer to the interactive notebook [PDEformer_inference
 ```text
 ./
 │  PDEformer_inference.ipynb                     # English interactive notebook for inference examples
-│  pip-requirements.txt                          # Python dependency list
+│  pyproject.toml                                # Python dependency list and project metadata
 │  README.md                                     # English documentation
 ├─configs
 │  └─inference                                   # Configurations for loading pretrained PDEformer models

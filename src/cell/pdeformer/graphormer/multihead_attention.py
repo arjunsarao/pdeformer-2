@@ -2,15 +2,14 @@ r"""Multi-headed attention."""
 from typing import Optional
 import math
 
-import mindspore as ms
-from mindspore import dtype as mstype
-from mindspore import Tensor, nn, ops
-from mindspore.common.initializer import initializer, XavierUniform, Zero, Uniform
+import torch
+from torch import Tensor, nn
+import torch.nn.functional as F
 
 from ...env import ENABLE_DROPOUT
 
 
-class MultiheadAttention(nn.Cell):
+class MultiheadAttention(nn.Module):
     r"""
     Multi-headed attention. See "Attention Is All You Need" paper for more details.
 
@@ -18,8 +17,8 @@ class MultiheadAttention(nn.Cell):
         embed_dim (int): The dimension of embedding.
         num_heads (int): The number of heads.
         dropout (float): The discard rate of dropout layer. Default: ``0.0``.
-        bias (bool): Determine whether bias is included in the nn.Dense layer. Default: ``True``.
-        compute_dtype (mstype.Float): The computation type. Default: mstype.float16.
+        bias (bool): Determine whether bias is included in the nn.Linear layer. Default: ``True``.
+        compute_dtype (torch.dtype): The computation type. Default: torch.float16.
 
     Inputs:
         - **x** (Tensor) - Input Tensor, shape is : math:`(n\_node, n\_graph, embed\_dim)`.
@@ -35,9 +34,9 @@ class MultiheadAttention(nn.Cell):
 
     Examples:
         >>> import numpy as np
-        >>> from mindspore import Tensor
+        >>> import torch
         >>> from src.cell.pdeformer.graphormer.multihead_attention import MultiheadAttention
-        >>> x = Tensor(np.random.randn(16, 8, 128), dtype=mstype.float32)
+        >>> x = torch.tensor(np.random.randn(16, 8, 128), dtype=torch.float32)
         >>> mha = MultiheadAttention(embed_dim=128, num_heads=8)
         >>> output = mha(x)
         >>> print(output.shape)
@@ -50,7 +49,7 @@ class MultiheadAttention(nn.Cell):
             num_heads,
             dropout=0.0,
             bias=True,
-            compute_dtype=mstype.float16) -> None:
+            compute_dtype=torch.float16) -> None:
         super().__init__()
 
         self.embed_dim = embed_dim
@@ -66,14 +65,12 @@ class MultiheadAttention(nn.Cell):
             raise ValueError("'embed_dim' must be divisible by 'num_heads'")
         self.scaling = self.head_dim ** -0.5
 
-        self.k_proj = nn.Dense(embed_dim, embed_dim, has_bias=bias).to_float(compute_dtype)
-        self.v_proj = nn.Dense(embed_dim, embed_dim, has_bias=bias).to_float(compute_dtype)
-        self.q_proj = nn.Dense(embed_dim, embed_dim, has_bias=bias).to_float(compute_dtype)
-        self.out_proj = nn.Dense(embed_dim, embed_dim, has_bias=bias).to_float(compute_dtype)
+        self.k_proj = nn.Linear(embed_dim, embed_dim, bias=bias).to(dtype=compute_dtype)
+        self.v_proj = nn.Linear(embed_dim, embed_dim, bias=bias).to(dtype=compute_dtype)
+        self.q_proj = nn.Linear(embed_dim, embed_dim, bias=bias).to(dtype=compute_dtype)
+        self.out_proj = nn.Linear(embed_dim, embed_dim, bias=bias).to(dtype=compute_dtype)
 
         self.init_params()
-
-        self.cast = ops.Cast()
 
     def init_params(self) -> None:
         """
@@ -82,37 +79,29 @@ class MultiheadAttention(nn.Cell):
         """
 
         scale = math.sqrt(1 / self.embed_dim)
-        self.k_proj.weight.set_data(
-            initializer(XavierUniform(gain=1 / math.sqrt(2)), self.k_proj.weight.shape, self.k_proj.weight.dtype))
+        nn.init.xavier_uniform_(self.k_proj.weight, gain=1 / math.sqrt(2))
         if self.k_proj.bias is not None:
-            self.k_proj.bias.set_data(
-                initializer(Uniform(scale), self.k_proj.bias.shape, self.k_proj.bias.dtype))
+            nn.init.uniform_(self.k_proj.bias, -scale, scale)
 
-        self.v_proj.weight.set_data(
-            initializer(XavierUniform(gain=1 / math.sqrt(2)), self.v_proj.weight.shape, self.v_proj.weight.dtype))
+        nn.init.xavier_uniform_(self.v_proj.weight, gain=1 / math.sqrt(2))
         if self.v_proj.bias is not None:
-            self.v_proj.bias.set_data(
-                initializer(Uniform(scale), self.v_proj.bias.shape, self.v_proj.bias.dtype))
+            nn.init.uniform_(self.v_proj.bias, -scale, scale)
 
-        self.q_proj.weight.set_data(
-            initializer(XavierUniform(gain=1 / math.sqrt(2)), self.q_proj.weight.shape, self.q_proj.weight.dtype))
+        nn.init.xavier_uniform_(self.q_proj.weight, gain=1 / math.sqrt(2))
         if self.q_proj.bias is not None:
-            self.q_proj.bias.set_data(
-                initializer(Uniform(scale), self.q_proj.bias.shape, self.q_proj.weight.dtype))
+            nn.init.uniform_(self.q_proj.bias, -scale, scale)
 
-        self.out_proj.weight.set_data(
-            initializer(XavierUniform(gain=1), self.out_proj.weight.shape, self.out_proj.weight.dtype))
+        nn.init.xavier_uniform_(self.out_proj.weight, gain=1)
         if self.out_proj.bias is not None:
-            self.out_proj.bias.set_data(
-                initializer(Zero(), self.out_proj.bias.shape, self.out_proj.bias.dtype))
+            nn.init.zeros_(self.out_proj.bias)
 
-    def construct(
+    def forward(
             self,
             x: Tensor,
             attn_bias: Optional[Tensor],
             key_padding_mask: Optional[Tensor] = None,
             attn_mask: Optional[Tensor] = None) -> Tensor:
-        r"""construct"""
+        r"""forward"""
         n_node, n_graph, embed_dim = x.shape
 
         # [n_node, n_graph, embed_dim] * [embed_dim, embed_dim] -> [n_node, n_graph, embed_dim]
@@ -127,25 +116,25 @@ class MultiheadAttention(nn.Cell):
         query *= self.scaling
 
         # [n_node, n_graph, embed_dim] -> [n_graph*num_heads, n_node, head_dim]
-        query = query.flatten().view(n_node, n_graph * self.num_heads,
-                                     self.head_dim).transpose(1, 0, 2)
+        query = query.reshape(n_node, n_graph * self.num_heads,
+                              self.head_dim).permute(1, 0, 2)
 
         # [n_node, n_graph, embed_dim] -> [n_graph*num_heads, n_node, head_dim]
-        key = key.flatten().view(n_node, n_graph * self.num_heads,
-                                 self.head_dim).transpose(1, 0, 2)
+        key = key.reshape(n_node, n_graph * self.num_heads,
+                          self.head_dim).permute(1, 0, 2)
 
         # [n_node, n_graph, embed_dim] -> [n_graph*num_heads, n_node, head_dim]
-        value = value.flatten().view(n_node, n_graph * self.num_heads,
-                                     self.head_dim).transpose(1, 0, 2)
+        value = value.reshape(n_node, n_graph * self.num_heads,
+                              self.head_dim).permute(1, 0, 2)
 
         # [n_graph*num_heads, n_node, head_dim] x [n_graph*num_heads, head_dim, n_node]
         # -> [n_graph*num_heads, n_node, n_node]
-        attn_weights = ops.bmm(query, key.transpose(0, 2, 1))
+        attn_weights = torch.bmm(query, key.transpose(1, 2))
 
         # Core code of Graphormer
         if attn_bias is not None:
             # Shape is [n_graph*num_heads, n_node, n_node].
-            attn_weights += attn_bias.view(n_graph * self.num_heads, n_node, n_node)
+            attn_weights += attn_bias.reshape(n_graph * self.num_heads, n_node, n_node)
 
         if attn_mask is not None:
             attn_mask = attn_mask.unsqueeze(dim=0)  # [n_node, n_node] -> [1, n_node, n_node]
@@ -162,30 +151,27 @@ class MultiheadAttention(nn.Cell):
 
             # don't attend to padding symbols
             # [n_graph*num_heads, n_node, n_node] -> [n_graph, num_heads, n_node, n_node]
-            attn_weights = attn_weights.view(n_graph, self.num_heads, n_node, n_node)
+            attn_weights = attn_weights.reshape(n_graph, self.num_heads, n_node, n_node)
 
             # [n_graph, n_node] -> [n_graph, 1, 1, n_node]
-            key_padding_mask = key_padding_mask.unsqueeze(dim=1).unsqueeze(dim=2).to(ms.bool_)
-            # masked_fill works on local CPU but fails on AICC CPU; ops.where always works
-            # attn_weights = attn_weights.masked_fill(
-            #     key_padding_mask, float("-inf"))  # [n_graph, num_heads, n_node, n_node]
-            attn_weights = ops.where(key_padding_mask, float("-inf"), attn_weights)
+            key_padding_mask = key_padding_mask.unsqueeze(dim=1).unsqueeze(dim=2).to(torch.bool)
+            attn_weights = attn_weights.masked_fill(key_padding_mask, float("-inf"))
 
             # [n_graph, num_heads, n_node, n_node] -> [n_graph*num_heads, n_node, n_node]
-            attn_weights = attn_weights.view(n_graph * self.num_heads, n_node, n_node)
+            attn_weights = attn_weights.reshape(n_graph * self.num_heads, n_node, n_node)
 
-        attn_weights = self.cast(attn_weights, mstype.float32)
-        attn_probs = ops.softmax(attn_weights, axis=-1)  # [n_graph*num_heads, n_node, n_node]
-        attn_probs = self.cast(attn_probs, self.compute_dtype)
+        attn_weights = attn_weights.to(torch.float32)
+        attn_probs = F.softmax(attn_weights, dim=-1)  # [n_graph*num_heads, n_node, n_node]
+        attn_probs = attn_probs.to(self.compute_dtype)
         if ENABLE_DROPOUT:
             attn_probs = self.dropout_module(attn_probs)  # [n_graph*num_heads, n_node, n_node]
 
         # [n_graph*num_heads, n_node, n_node] x [n_graph*num_heads, n_node, head_dim]
         # -> [n_graph*num_heads, n_node, head_dim]
-        attn = ops.bmm(attn_probs, value)
+        attn = torch.bmm(attn_probs, value)
 
         # [n_graph*num_heads, n_node, head_dim] -> [n_node, n_graph, embed_dim]
-        attn = attn.transpose(1, 0, 2).flatten().view(n_node, n_graph, embed_dim)
+        attn = attn.permute(1, 0, 2).reshape(n_node, n_graph, embed_dim)
 
         # [n_node, n_graph, embed_dim] * [embed_dim, embed_dim] -> [n_node, n_graph, embed_dim]
         attn = self.out_proj(attn)
