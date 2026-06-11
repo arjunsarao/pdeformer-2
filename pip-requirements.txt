@@ -1,5 +1,5 @@
 omegaconf
-h5py==3.9.0
+h5py>=3.11,<4
 networkx
 matplotlib
 einops

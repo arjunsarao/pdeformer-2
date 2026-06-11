@@ -216,6 +216,7 @@ class Plotter2DVideo:
         self.title_fontsize = kwargs.get("title_fontsize", 16)
         self.video_dt = kwargs.get("video_dt", 100)  # Frame interval in milliseconds
         self.loop = kwargs.get("loop", True)  # Whether to loop the video
+        self.channel_names = kwargs.get("channel_names", None)
 
         # Animation-related attributes
         self.anim = None
@@ -232,46 +233,48 @@ class Plotter2DVideo:
         Args:
             figure (Figure): Matplotlib Figure object.
             canvas (FigureCanvas): Matplotlib FigureCanvas object.
-            field (np.ndarray): 3D NumPy array with shape (time_steps, y, x).
+            field (np.ndarray): 3D NumPy array with shape (time_steps, y, x), or
+                4D/5D array with channels, such as (time_steps, x, y, channel)
+                or (time_steps, x, y, 1, channel).
         """
-        if field.ndim != 3:
-            raise ValueError("Input 'field' should be a 3D array with shape (time_steps, y, x).")
+        field = self._normalize_field(field)
 
         self.field = field
         self.num_frames = field.shape[0]
+        self.num_channels = field.shape[-1]
         self.current_frame = 0
-        vmin = np.min(field)
-        vmax = np.max(field)
+        vmin = np.min(field, axis=(0, 1, 2))
+        vmax = np.max(field, axis=(0, 1, 2))
         if self.vmin is not None:
-            vmin = min(vmin, self.vmin)
+            vmin = np.minimum(vmin, self.vmin)
         if self.vmax is not None:
-            vmax = max(vmax, self.vmax)
+            vmax = np.maximum(vmax, self.vmax)
 
         figure.clear()
-        ax = figure.add_subplot(111)
+        axes = figure.subplots(1, self.num_channels, squeeze=False)[0]
+        self.axes = axes
 
         # Initialize image with the first frame
+        self.im = []
         initial_field = self.field[self.current_frame]
-        self.im = ax.imshow(
-            initial_field,
-            extent=[self.x_coord[0], self.x_coord[-1], self.y_coord[0], self.y_coord[-1]],
-            origin='lower',
-            cmap=self.cmap,
-            vmin=vmin,
-            vmax=vmax,
-        )
-
-        # Add title to the plot
-        title_str = (f"{self.title} - Frame {self.current_frame+1}/{self.num_frames} - "
-                     f"Time {self.t_coord[self.current_frame]:.2f}")
-        ax.set_title(title_str, fontsize=self.title_fontsize, pad=10)
-
-        # Remove axes for a cleaner look
-        ax.axis('off')
-
-        # Add colorbar if enabled
-        if self.show_colorbar:
-            self.cbar = figure.colorbar(self.im, ax=ax)
+        for idx_channel, ax in enumerate(axes):
+            im = ax.imshow(
+                initial_field[..., idx_channel],
+                extent=[self.x_coord[0], self.x_coord[-1], self.y_coord[0], self.y_coord[-1]],
+                origin='lower',
+                cmap=self.cmap,
+                vmin=vmin[idx_channel],
+                vmax=vmax[idx_channel],
+            )
+            ax.set_title(
+                self._title_str(idx_channel),
+                fontsize=self.title_fontsize,
+                pad=10,
+            )
+            ax.axis('off')
+            if self.show_colorbar:
+                figure.colorbar(im, ax=ax)
+            self.im.append(im)
 
         canvas.draw()
 
@@ -301,12 +304,16 @@ class Plotter2DVideo:
                 return
 
         # Update image data with the current frame
-        self.im.set_data(self.field[self.current_frame])
+        for idx_channel, im in enumerate(self.im):
+            im.set_data(self.field[self.current_frame, ..., idx_channel])
 
         # Update the title to reflect the current frame
-        title_str = (f"{self.title} - Frame {self.current_frame+1}/{self.num_frames}"
-                     f" - Time {self.t_coord[self.current_frame]:.2f}")
-        self.im.axes.set_title(title_str, fontsize=self.title_fontsize, pad=10)
+        for idx_channel, ax in enumerate(self.axes):
+            ax.set_title(
+                self._title_str(idx_channel),
+                fontsize=self.title_fontsize,
+                pad=10,
+            )
 
         # Redraw the canvas to display the updated frame
         canvas.draw()
@@ -332,6 +339,28 @@ class Plotter2DVideo:
             self.timer.stop()
             self.timer = None
         self.t_coord = t_coord
+
+    @staticmethod
+    def _normalize_field(field: np.ndarray) -> np.ndarray:
+        """Return field in shape (time_steps, x, y, channel)."""
+        field = np.asarray(field)
+        if field.ndim == 3:
+            return np.expand_dims(field, axis=-1)
+        if field.ndim == 4:
+            return field
+        if field.ndim == 5 and field.shape[-2] == 1:
+            return np.squeeze(field, axis=-2)
+        raise ValueError(
+            "Input 'field' should have shape (time_steps, x, y), "
+            "(time_steps, x, y, channel), or (time_steps, x, y, 1, channel).")
+
+    def _title_str(self, idx_channel: int) -> str:
+        if self.channel_names is None:
+            channel_name = "" if self.num_channels == 1 else f" channel {idx_channel}"
+        else:
+            channel_name = f" {self.channel_names[idx_channel]}"
+        return (f"{self.title}{channel_name} - Frame {self.current_frame+1}/{self.num_frames} - "
+                f"Time {self.t_coord[self.current_frame]:.2f}")
 
 
 class Plotter2DSnapshots:

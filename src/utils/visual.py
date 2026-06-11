@@ -753,7 +753,10 @@ def video_2d(label: NDArray[float],
 def video_2d_realtime(u_at_t_fn: Callable[[float], NDArray[float]],
                       t_coord: NDArray[float],
                       x_ext: NDArray[float],
-                      y_ext: NDArray[float]) -> FuncAnimation:
+                      y_ext: NDArray[float],
+                      interval: int = 80,
+                      figsize: Optional[Tuple[float, float]] = None,
+                      ) -> FuncAnimation:
     r"""
     Generate a video for 2D predicted solutions, in which the solution
     snapshots are computed on-the-fly.
@@ -765,11 +768,16 @@ def video_2d_realtime(u_at_t_fn: Callable[[float], NDArray[float]],
         t_coord: Shape [n_snap].
         x_ext: Shape [dim1, dim2].
         y_ext: Shape [dim1, dim2].
+        interval: Delay between frames in milliseconds.
+        figsize: Figure size in inches. Defaults to a size based on the number
+            of plotted variables.
     """
     u_init = u_at_t_fn(t_coord[0])
     _, _, n_vars = u_init.shape
 
-    fig, axes = plt.subplots(1, n_vars, squeeze=False)
+    if figsize is None:
+        figsize = (4 * n_vars, 4)
+    fig, axes = plt.subplots(1, n_vars, squeeze=False, figsize=figsize)
     axes = axes[0]  # [1, n_vars] -> [n_vars]
     vmin = np.empty(n_vars)
     vmax = np.empty(n_vars)
@@ -807,7 +815,7 @@ def video_2d_realtime(u_at_t_fn: Callable[[float], NDArray[float]],
             img_list[idx_var].set_array(snapshot[:, :, idx_var])
         plt.suptitle(f"$t={t_coord[frame]:.2f}$")
 
-    anim = FuncAnimation(fig, update, frames=range(len(t_coord)))
+    anim = FuncAnimation(fig, update, frames=range(len(t_coord)), interval=interval)
     return anim
 
 
