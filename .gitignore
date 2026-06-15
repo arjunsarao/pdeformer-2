@@ -15,4 +15,5 @@ summary
 log_output
 rank_*
 *.ckpt
+*.pt
 kernel*
