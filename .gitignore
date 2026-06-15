@@ -17,3 +17,4 @@ rank_*
 *.ckpt
 *.pt
 kernel*
+.DS_Store
