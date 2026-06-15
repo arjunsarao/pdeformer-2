@@ -3,10 +3,10 @@ import math
 from typing import Optional
 import numpy as np
 
-import mindspore.common.dtype as mstype
-from mindspore import ops, nn, Tensor, Parameter
-from mindspore.ops import operations as P
-from mindspore.common.initializer import initializer, Uniform, HeUniform, One, Zero
+from src.torch_compat import dtype as mstype
+from src.torch_compat import ops, nn, Tensor, Parameter
+from src.torch_compat import operations as P
+from src.torch_compat import initializer, Uniform, HeUniform, One, Zero
 
 from ...basic_block import UniformInitDense
 
@@ -254,7 +254,7 @@ class MFNNet(nn.Cell):
 
     Examples:
         >>> import numpy as np
-        >>> from mindspore import Tensor, nn
+        >>> from src.torch_compat import Tensor, nn
         >>> from src.cell.pdeformer.function_encoder import MFNNet
         >>> x = Tensor(np.random.randn(2, 10, 3), mstype.float32)
         >>> mfn = MFNNet(3, 64, 128, 2, compute_dtype=mstype.float32)
@@ -380,7 +380,7 @@ class MFNNetWithHypernet(nn.Cell):
 
     Examples:
         >>> import numpy as np
-        >>> from mindspore import Tensor, nn
+        >>> from src.torch_compat import Tensor, nn
         >>> from src.cell.pdeformer.function_encoder import MFNNetWithHypernet
         >>> inr_dim_in = 2
         >>> inr_dim_out = 1

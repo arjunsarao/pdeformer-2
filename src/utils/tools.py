@@ -6,8 +6,8 @@ import numpy as np
 from numpy.typing import NDArray
 import matplotlib.pyplot as plt
 
-import mindspore as ms
-from mindspore import nn, ops, Tensor
+import src.torch_compat as ms
+from src.torch_compat import nn, ops, Tensor
 
 
 def set_seed(seed: int) -> None:

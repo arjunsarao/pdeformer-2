@@ -44,8 +44,7 @@ $$(\Omega,\mathcal{F},c_1,\dots,s_1(r),\dots,\Gamma_1,\mathcal{B}_1,c_{11},\dots
 
 ## 安装
 
-首先确保 MindSpore 已成功安装，见 [安装教程](https://www.mindspore.cn/install)。
-其他依赖库可以通过如下命令安装：
+通过如下命令安装 PyTorch 版依赖库：
 
 ```bash
 pip3 install -r pip-requirements.txt
@@ -85,17 +84,11 @@ pip3 install -r pip-requirements.txt
 
 | 模型 | 参数量 | 配置文件 | 预训练权重文件 |
 | ---- | ---- | ---- | ---- |
-| PDEformer-2-base | 82.65M | [configs/inference/model-L.yaml](configs/inference/model-L.yaml) | [model-L.ckpt](https://ai.gitee.com/functoreality/PDEformer2-L/blob/master/model-L.ckpt) |
-| PDEformer-2-fast | 71.07M | [configs/inference/model-M.yaml](configs/inference/model-M.yaml) | [model-M.ckpt](https://ai.gitee.com/functoreality/PDEformer2-M/blob/master/model-M.ckpt) |
-| PDEformer-2-small | 27.75M | [configs/inference/model-S.yaml](configs/inference/model-S.yaml) | [model-S.ckpt](https://ai.gitee.com/functoreality/PDEformer2-S/blob/master/model-S.ckpt) |
+| PDEformer-2-base | 82.65M | [configs/inference/model-L.yaml](configs/inference/model-L.yaml) | `model-L.pt` PyTorch state dict |
+| PDEformer-2-fast | 71.07M | [configs/inference/model-M.yaml](configs/inference/model-M.yaml) | `model-M.pt` PyTorch state dict |
+| PDEformer-2-small | 27.75M | [configs/inference/model-S.yaml](configs/inference/model-S.yaml) | `model-S.pt` PyTorch state dict |
 
-模型权重文件也可以通过如下命令下载：
-
-```bash
-wget -c data-download.obs.cn-northeast-227.dlaicc.com/checkpoints/release/pdeformer2-base.ckpt
-wget -c data-download.obs.cn-northeast-227.dlaicc.com/checkpoints/release/pdeformer2-fast.ckpt
-wget -c data-download.obs.cn-northeast-227.dlaicc.com/checkpoints/release/pdeformer2-small.ckpt
-```
+原始发布的 `.ckpt` 文件为 MindSpore 权重，需要先转换为 PyTorch state dict 后再加载。
 
 其中 PDEformer-2-small（即 S 模型）仅为需要更快推理时间的用户提供。
 我们并未系统地评估它的性能。
@@ -103,12 +96,11 @@ wget -c data-download.obs.cn-northeast-227.dlaicc.com/checkpoints/release/pdefor
 ### 推理示例
 
 下面的示例代码展示了如何使用 PDEformer-2 预测给定 PDE 的解，以非线性守恒律方程 $u_{t}+(u^2)_x+(-0.3u)_y=0$ （周期边界）为例。
-运行前需要先从 [Gitee AI](https://ai.gitee.com/functoreality/PDEformer2-M/blob/master/model-M.ckpt) 下载经过预训练的 PDEformer-2-fast 权重 `model-M.ckpt`，
-并将 [configs/inference/model-M.yaml](configs/inference/model-M.yaml) 中 `model.load_ckpt` 参数的值改为相应的权重文件路径。
+运行前请将 [configs/inference/model-M.yaml](configs/inference/model-M.yaml) 中 `model.load_ckpt` 参数的值改为转换后的 PyTorch state dict 路径，例如 `model-M.pt`。
 
 ```python
 import numpy as np
-from mindspore import context
+from src.torch_compat import context
 from src import load_config, get_model, PDENodesCollector
 from src.inference import infer_plot_2d, x_fenc, y_fenc
 
@@ -140,7 +132,7 @@ PDEformer-2 通过预训练掌握了多种不同类型 PDE 的正问题求解能
 这里以 PDEBench 数据集中的 2D 浅水波（径向溃坝）数据为例，仅使用单个样本微调模型，并测试模型在 100 个测试样本上的预测精度。
 微调过程依照如下几个步骤进行：
 
-* (1) 从 [Gitee AI](https://ai.gitee.com/functoreality/PDEformer2-M/blob/master/model-M.ckpt) 下载经过预训练的 PDEformer-2 权重 `model-M.ckpt`；
+* (1) 准备转换后的 PyTorch 预训练 PDEformer-2 权重，例如 `model-M.pt`；
 * (2) 下载 PDEBench 数据集中的 [2D_rdb_NA_NA.h5](https://darus.uni-stuttgart.de/api/access/datafile/133021)；
 * (3) 修改配置文件 [configs/finetune/pdebench-swe-rdb_model-M.yaml](configs/finetune/pdebench-swe-rdb_model-M.yaml)，
 	指定下载所得的的模型权重文件路径（`model.load_ckpt` 参数）与数据集所在的文件夹（`data.path` 参数）：
@@ -149,7 +141,7 @@ PDEformer-2 通过预训练掌握了多种不同类型 PDE 的正问题求解能
 # ...
 model:
   # ...
-  load_ckpt: path/to/your/downloaded/model-M.ckpt  # 预训练模型权重路径
+  load_ckpt: path/to/your/downloaded/model-M.pt  # 预训练模型权重路径
 data:
   path: ../data_download  # 数据集所在目录
   num_samples_per_file:

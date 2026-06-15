@@ -1,8 +1,8 @@
 r"""Graphormer encoder layer."""
 from typing import Optional
 
-from mindspore import dtype as mstype
-from mindspore import Tensor, nn
+from src.torch_compat import dtype as mstype
+from src.torch_compat import Tensor, nn
 
 from ...basic_block import UniformInitDense
 from .multihead_attention import MultiheadAttention
@@ -52,7 +52,7 @@ class GraphormerEncoderLayer(nn.Cell):
 
     Examples:
         >>> import numpy as np
-        >>> from mindspore import Tensor
+        >>> from src.torch_compat import Tensor
         >>> from src.cell.pdeformer.graphormer.graphormer_encoder_layer import GraphormerEncoderLayer
         >>> x = Tensor(np.random.randn(16, 32, 768), mstype.float32)
         >>> encoder_layer = GraphormerEncoderLayer(embed_dim=768, ffn_embed_dim=3072, num_heads=8, dropout=0.1,

@@ -5,7 +5,8 @@ import numpy as np
 from numpy.typing import NDArray
 from scipy.interpolate import RegularGridInterpolator
 import matplotlib.pyplot as plt
-from mindspore import Tensor
+import torch
+from src.torch_compat import Tensor
 
 from src.cell import PDEformer
 from src.data.pde_dag import PDEAsDAG
@@ -26,10 +27,11 @@ def inference_pde(model: PDEformer,
         return Tensor(array).expand_dims(0)  # [*] -> [1, *]
 
     # inference the first PDE component
-    pred = model(as_tensor(pde_dag.node_type), as_tensor(pde_dag.node_scalar),
-                 as_tensor(pde_dag.node_function), as_tensor(pde_dag.in_degree),
-                 as_tensor(pde_dag.out_degree), as_tensor(pde_dag.attn_bias),
-                 as_tensor(pde_dag.spatial_pos), as_tensor(coordinate))
+    with torch.no_grad():
+        pred = model(as_tensor(pde_dag.node_type), as_tensor(pde_dag.node_scalar),
+                     as_tensor(pde_dag.node_function), as_tensor(pde_dag.in_degree),
+                     as_tensor(pde_dag.out_degree), as_tensor(pde_dag.attn_bias),
+                     as_tensor(pde_dag.spatial_pos), as_tensor(coordinate))
     pred = pred.asnumpy().astype(np.float32)  # [1, n_pts, 1]
 
     # multi-component case, inference the rest components
@@ -38,11 +40,12 @@ def inference_pde(model: PDEformer,
         # iterate over all remaining components
         for idx_var in range(1, pde_dag.n_vars):
             spatial_pos, attn_bias = pde_dag.get_spatial_pos_attn_bias(idx_var)
-            pred = model(
-                as_tensor(pde_dag.node_type), as_tensor(pde_dag.node_scalar),
-                as_tensor(pde_dag.node_function), as_tensor(pde_dag.in_degree),
-                as_tensor(pde_dag.out_degree), as_tensor(attn_bias),
-                as_tensor(spatial_pos), as_tensor(coordinate))
+            with torch.no_grad():
+                pred = model(
+                    as_tensor(pde_dag.node_type), as_tensor(pde_dag.node_scalar),
+                    as_tensor(pde_dag.node_function), as_tensor(pde_dag.in_degree),
+                    as_tensor(pde_dag.out_degree), as_tensor(attn_bias),
+                    as_tensor(spatial_pos), as_tensor(coordinate))
             pred = pred.asnumpy().astype(np.float32)  # [1, n_pts, 1]
             pred_all.append(pred)
         pred = np.concatenate(pred_all, axis=-1)  # [1, n_pts, n_vars]

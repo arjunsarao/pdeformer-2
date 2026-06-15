@@ -1,6 +1,6 @@
 r"""DeepONet model."""
-from mindspore import nn, Tensor, Parameter, ops
-import mindspore.common.dtype as mstype
+from src.torch_compat import nn, Tensor, Parameter, ops
+from src.torch_compat import dtype as mstype
 
 from ..basic_block import MLP, CoordPositionalEncoding
 
@@ -49,7 +49,7 @@ class DeepONet(nn.Cell):
 
     Examples:
         >>> import numpy as np
-        >>> import mindspore
+        >>> import src.torch_compat as ms
         >>> from model.baseline.deeponet import DeepONet
         >>> trunk_dim_in = 2
         >>> trunk_dim_hidden = 128

@@ -1,6 +1,6 @@
 base_config: configs/finetune/pdebench-swe-rdb_model-M.yaml
 model:
-  load_ckpt: path/to/your/downloaded/model-M.ckpt  # set to "none" for from-scratch
+  load_ckpt: path/to/your/downloaded/model-M.pt  # set to "none" for from-scratch
 data:
   path: ../data_download  # or any path/to/your/data_download
   num_samples_per_file:

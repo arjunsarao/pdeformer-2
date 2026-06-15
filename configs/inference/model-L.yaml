@@ -37,7 +37,7 @@ model:
     dim_hidden: 512
     num_layers: 2
     shared: False
-  load_ckpt: path/to/your/downloaded/model-L.ckpt
+  load_ckpt: path/to/your/downloaded/model-L.pt
   # You can download from https://ai.gitee.com/functoreality/PDEformer2-L/blob/master/model-L.ckpt
   # or data-download.obs.cn-northeast-227.dlaicc.com/checkpoints/release/pdeformer2-base.ckpt
 data:

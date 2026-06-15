@@ -8,8 +8,9 @@ from typing import Tuple, Dict, Any
 
 import numpy as np
 from numpy.typing import NDArray
-from mindspore import dtype as mstype
-from mindspore import ops, Tensor, context, nn
+import torch
+from src.torch_compat import dtype as mstype
+from src.torch_compat import ops, Tensor, context, nn
 
 from src.data.load_inverse_data import get_inverse_data, inverse_observation
 from src.data.pde_dag import NODE_TYPE_DICT
@@ -29,9 +30,9 @@ def parse_args():
                         choices=[True, False],
                         help="Whether to save intermediate compilation graphs")
     parser.add_argument("--save_graphs_path", type=str, default="./graphs")
-    parser.add_argument("--device_target", type=str, default="Ascend",
-                        choices=["GPU", "Ascend", "CPU"],
-                        help="The target device to run, support 'Ascend', 'GPU', 'CPU'")
+    parser.add_argument("--device_target", type=str, default="CPU",
+                        choices=["GPU", "CPU"],
+                        help="The target device to run, support 'GPU' and 'CPU'")
     parser.add_argument("--device_id", type=int, default=0,
                         help="ID of the target device")
     parser.add_argument("--config_file_path", "-c", type=str, required=True,
@@ -173,7 +174,8 @@ class DataPSO:
         """
         def get_pred(input_tuple: Tuple[Tensor], i_sample: int) -> NDArray[float]:
             input_tuple = (tensor[[i_sample]] for tensor in input_tuple)
-            pred = model(*input_tuple)  # [1, num_point, 1]
+            with torch.no_grad():
+                pred = model(*input_tuple)  # [1, num_point, 1]
             pred = pred.asnumpy().astype(np.float32)
             return pred[0]  # [num_point, 1]
 
@@ -276,9 +278,10 @@ class InversePSO:
         for i in range(self.pop_size):
             input_tuple = self.data.get_input_tuple(self.pop[i])
             label = self.data.u_obs
-            pred = self.model(*input_tuple)
             coordinate = input_tuple[-1]
-            loss = self.loss_fn(pred, label, coordinate)  # [1]
+            with torch.no_grad():
+                pred = self.model(*input_tuple)
+                loss = self.loss_fn(pred, label, coordinate)  # [1]
             fitness.append(loss.asnumpy())
 
         return np.array(fitness, dtype=np.float32)  # [pop_size]
@@ -371,9 +374,10 @@ class InversePSO:
         coordinate = self.data.coordinate_obs
         input_gt = (node_type, node_scalar, node_function, in_degree, out_degree, attn_bias,
                     spatial_pos, coordinate)
-        pred = self.model(*input_gt)
         label = self.data.u_obs
-        loss = self.loss_fn(pred, label, coordinate).asnumpy()
+        with torch.no_grad():
+            pred = self.model(*input_gt)
+            loss = self.loss_fn(pred, label, coordinate).asnumpy()
         info = f'PDE {self.data.pde_idx} ground truth fitness {loss:>7f}'
         record.print(info)
         for i in range(self.max_gen):
@@ -403,6 +407,8 @@ def inverse(model: nn.Cell) -> None:
     Solve the inverse problem that recovers the equation coefficients from the observed data
     using particle swarm optimization based on the pre-trained model.
     """
+    model.set_train(False)
+
     # loss function for calculate fitness
     loss_fn = LossFunction(config.inverse, reduce_mean=True)
 
@@ -490,16 +496,13 @@ if __name__ == "__main__":
     # args
     args = parse_args()
 
-    # mindspore context
+    # PyTorch context
     context.set_context(
         mode=context.GRAPH_MODE if args.mode.upper().startswith(
             "GRAPH") else context.PYNATIVE_MODE,
         save_graphs=args.save_graphs, save_graphs_path=args.save_graphs_path,
         device_target=args.device_target, device_id=args.device_id)
-    use_ascend = context.get_context(attr_key='device_target') == "Ascend"
-
-    # compute_type
-    compute_type = mstype.float16 if use_ascend else mstype.float32
+    compute_type = mstype.float32
 
     # load config file
     config = load_config(args.config_file_path)

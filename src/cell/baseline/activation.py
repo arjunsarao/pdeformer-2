@@ -2,9 +2,9 @@
 from __future__ import absolute_import
 
 import numpy as np
-import mindspore.ops as ops
-import mindspore.nn.layer.activation as activation
-import mindspore.nn as nn
+from src.torch_compat import ops
+from src.torch_compat import activation
+from src.torch_compat import nn
 
 __all__ = ['get_activation']
 
@@ -27,7 +27,7 @@ class SReLU(nn.Cell):
     Examples:
         >>> import numpy as np
         >>> from mindflow.cell.activation import SReLU
-        >>> from mindspore import Tensor
+        >>> from src.torch_compat import Tensor
         >>> input_x = Tensor(np.array([[1.2, 0.1], [0.2, 3.2]], dtype=np.float32))
         >>> srelu = SReLU()
         >>> output = srelu(input_x)
@@ -76,7 +76,7 @@ def get_activation(name):
         name (Union[str, None]): The name of the activation function. If name was ``None``, it would return ``None``.
 
     Returns:
-        Function(mindspore.cell), the activation function.
+        Function(ms.cell), the activation function.
 
     Supported Platforms:
         ``Ascend`` ``GPU``
@@ -84,7 +84,7 @@ def get_activation(name):
     Examples:
         >>> import numpy as np
         >>> from mindflow.cell import get_activation
-        >>> from mindspore import Tensor
+        >>> from src.torch_compat import Tensor
         >>> input_x = Tensor(np.array([[1.2, 0.1], [0.2, 3.2]], dtype=np.float32))
         >>> sigmoid = get_activation('sigmoid')
         >>> output = sigmoid(input_x)

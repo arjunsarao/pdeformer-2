@@ -3,8 +3,8 @@ r"""Fourier Neural Operators"""
 
 import numpy as np
 from numpy.typing import NDArray
-from mindspore import nn, ops, Tensor
-import mindspore.common.dtype as mstype
+from src.torch_compat import nn, ops, Tensor
+from src.torch_compat import dtype as mstype
 
 from .dft import SpectralConv1dDft, SpectralConv2dDft, SpectralConv3dDft
 from .activation import get_activation
@@ -120,8 +120,8 @@ class FNOBlocks(nn.Cell):
 
     Examples:
         >>> import numpy as np
-        >>> from mindspore import Tensor
-        >>> import mindspore.common.dtype as mstype
+        >>> from src.torch_compat import Tensor
+        >>> from src.torch_compat import dtype as mstype
         >>> from mindflow.cell.neural_operators import FNOBlocks
         >>> data = Tensor(np.ones([2, 3, 128, 128]), mstype.float32)
         >>> net = FNOBlocks(in_channels=3, out_channels=3, n_modes=[20, 20], resolutions=[128, 128])
@@ -270,8 +270,8 @@ class FNO(nn.Cell):
 
     Examples:
         >>> import numpy as np
-        >>> from mindspore import Tensor
-        >>> import mindspore.common.dtype as mstype
+        >>> from src.torch_compat import Tensor
+        >>> from src.torch_compat import dtype as mstype
         >>> from mindflow.cell.neural_operators.fno import FNO
         >>> data = Tensor(np.ones([2, 3, 128, 128]), mstype.float32)
         >>> net = FNO(in_channels=3, out_channels=3, n_modes=[20, 20], resolutions=[128, 128])
@@ -453,10 +453,10 @@ class FNO1D(FNO):
 
     Examples:
         >>> import numpy as np
-        >>> import mindspore
+        >>> import src.torch_compat as ms
         >>> import mindflow
-        >>> from mindspore import Tensor
-        >>> import mindspore.common.dtype as mstype
+        >>> from src.torch_compat import Tensor
+        >>> from src.torch_compat import dtype as mstype
         >>> from mindflow.cell import FNO1D
         >>> data = Tensor(np.ones([2, 128, 3]), mstype.float32)
         >>> net = FNO1D(in_channels=3, out_channels=3, n_modes=[20], resolutions=[128])
@@ -555,10 +555,10 @@ class FNO2D(FNO):
 
     Examples:
         >>> import numpy as np
-        >>> import mindspore
+        >>> import src.torch_compat as ms
         >>> import mindflow
-        >>> from mindspore import Tensor
-        >>> import mindspore.common.dtype as mstype
+        >>> from src.torch_compat import Tensor
+        >>> from src.torch_compat import dtype as mstype
         >>> from mindflow.cell import FNO2D
         >>> data = Tensor(np.ones([2, 128, 128, 3]), mstype.float32)
         >>> net = FNO2D(in_channels=3, out_channels=3, n_modes=[20, 20], resolutions=[128, 128])
@@ -671,10 +671,10 @@ class FNO3D(FNO):
 
     Examples:
         >>> import numpy as np
-        >>> import mindspore
+        >>> import src.torch_compat as ms
         >>> import mindflow
-        >>> from mindspore import Tensor
-        >>> import mindspore.common.dtype as mstype
+        >>> from src.torch_compat import Tensor
+        >>> from src.torch_compat import dtype as mstype
         >>> from mindflow.cell import FNO3D
         >>> data = Tensor(np.ones([2, 128, 128, 128, 3]), mstype.float32)
         >>> net = FNO3D(in_channels=3, out_channels=3, n_modes=[20, 20, 20], resolutions=[128, 128, 128])

@@ -1,7 +1,7 @@
 r"""Some check functions."""
 from __future__ import absolute_import
 
-from mindspore import context
+from src.torch_compat import context
 
 _SPACE = " "
 

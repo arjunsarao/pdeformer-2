@@ -8,12 +8,13 @@ from typing import Tuple, Dict, Any
 from omegaconf import DictConfig
 import numpy as np
 from numpy.typing import NDArray
+import torch
 
-import mindspore as ms
-from mindspore import dtype as mstype
-from mindspore import ops, nn, Tensor, context
-from mindspore.common.initializer import initializer, Uniform, One
-from mindspore.amp import DynamicLossScaler, auto_mixed_precision
+import src.torch_compat as ms
+from src.torch_compat import dtype as mstype
+from src.torch_compat import ops, nn, Tensor, context
+from src.torch_compat import initializer, Uniform, One
+from src.torch_compat import DynamicLossScaler, auto_mixed_precision
 
 from src.data.load_inverse_data import get_inverse_data, inverse_observation
 from src.utils import load_config, init_record, set_seed
@@ -32,9 +33,9 @@ def parse_args():
                         choices=[True, False],
                         help="Whether to save intermediate compilation graphs")
     parser.add_argument("--save_graphs_path", type=str, default="./graphs")
-    parser.add_argument("--device_target", type=str, default="Ascend",
-                        choices=["GPU", "Ascend", "CPU"],
-                        help="The target device to run, support 'Ascend', 'GPU', 'CPU'")
+    parser.add_argument("--device_target", type=str, default="CPU",
+                        choices=["GPU", "CPU"],
+                        help="The target device to run, support 'GPU' and 'CPU'")
     parser.add_argument("--device_id", type=int, default=0,
                         help="ID of the target device")
     parser.add_argument("--distributed", action="store_true",
@@ -193,7 +194,8 @@ class InverseProblem:
         """
         def get_pred(data_tuple: Tuple[Tensor], i_sample: int) -> NDArray[float]:
             input_tuple = (tensor[[i_sample]] for tensor in data_tuple[:-1])
-            pred = model(*input_tuple)  # [1, num_point, 1]
+            with torch.no_grad():
+                pred = model(*input_tuple)  # [1, num_point, 1]
             pred = pred.asnumpy().astype(np.float32)
             return pred[0]  # [num_point, 1]
 
@@ -218,6 +220,10 @@ def inverse(model: nn.Cell) -> None:
     Solve the inverse problem that recovers the function-valued term in a PDE
     from the observed data using gradient descent based on the pre-trained model.
     """
+    model.set_train(False)
+    for param in model.parameters():
+        param.requires_grad_(False)
+
     # loss function
     loss_fn = LossFunction(config.inverse, reduce_mean=True)
 
@@ -245,16 +251,9 @@ def inverse(model: nn.Cell) -> None:
         invp = InverseProblem(pde_idx, data_tuple, config.inverse, data_info)
 
         # optimizer
-        params = [{'params': [invp.recovered], 'lr': lr_var,
+        params = [{'params': [invp.recovered], 'lr': lr_var[0],
                    'weight_decay': config.inverse.func.weight_decay}]
-        optimizer = nn.Adam(params)
-
-        # distributed training (data parallel)
-        if use_ascend and args.distributed:
-            grad_reducer = nn.DistributedGradReducer(optimizer.parameters)
-        else:
-            def grad_reducer(x_in):
-                return x_in
+        optimizer = torch.optim.Adam(params)
 
         # define forward function
         get_data_tuple = invp.get_data_tuple
@@ -274,26 +273,19 @@ def inverse(model: nn.Cell) -> None:
 
             return loss, pred
 
-        # define gradient function
-        grad_fn = ops.value_and_grad(forward_fn, None, optimizer.parameters, has_aux=True)
-
         # function for one step of training
-        @ms.jit
-        def train_step():
-            (loss, pred), grads = grad_fn()  # pylint: disable=W0640
+        def train_step(step_id: int):
+            lr_value = lr_var[min(step_id, len(lr_var) - 1)]
+            for group in optimizer.param_groups:
+                group["lr"] = lr_value
 
-            grads = ops.clip_by_global_norm(grads, clip_norm=1.0)
-            # distributed training (data parallel)
-            grads = grad_reducer(grads)  # pylint: disable=W0640
+            optimizer.zero_grad(set_to_none=True)
+            loss, pred = forward_fn()  # pylint: disable=W0640
+            loss.backward()
+            torch.nn.utils.clip_grad_norm_([invp.recovered], max_norm=1.0)
+            optimizer.step()
 
-            # auto mixed precision
-            if use_fp16:
-                loss = loss_scaler.unscale(loss)
-                grads = loss_scaler.unscale(grads)
-
-            loss = ops.depend(loss, optimizer(grads))  # pylint: disable=W0640
-
-            return loss, pred
+            return loss.detach(), pred.detach()
 
         # training loop
         print_interval = math.ceil(config.inverse.func.epochs / 100)
@@ -312,7 +304,7 @@ def inverse(model: nn.Cell) -> None:
                 num_init = 1
             print_interval = math.ceil(config.inverse.func.epochs / 100)
             for epoch in range(1, 1 + config.inverse.func.epochs):
-                loss, _ = train_step()
+                loss, _ = train_step(epoch - 1)
 
                 if (epoch - 1) % print_interval == 0 or epoch == config.inverse.func.epochs:
                     # record
@@ -332,7 +324,7 @@ def inverse(model: nn.Cell) -> None:
             recovered_lst.append(invp.recovered.asnumpy())
         min_idex = loss_lst.index(min(loss_lst))
         recovered_best = recovered_lst[min_idex]
-        invp.recovered=ms.Parameter(recovered_best, name='function_valued_term')
+        invp.recovered = ms.Parameter(recovered_best, name='function_valued_term')
         invp.compare(enable_plot=True)
 
     nrmse_mean = np.array(nrmse_all).mean()
@@ -348,7 +340,7 @@ if __name__ == "__main__":
     # args
     args = parse_args()
 
-    # mindspore context
+    # PyTorch context
     context.set_context(
         save_graphs=args.save_graphs, save_graphs_path=args.save_graphs_path,
         device_target=args.device_target, device_id=args.device_id)
@@ -356,8 +348,7 @@ if __name__ == "__main__":
         context.set_context(mode=context.GRAPH_MODE)
     else:
         context.set_context(mode=context.PYNATIVE_MODE)
-    use_ascend = context.get_context(attr_key='device_target') == "Ascend"
-    use_fp16 = use_ascend
+    use_fp16 = False
 
     # compute_type
     compute_type = mstype.float16 if use_fp16 else mstype.float32

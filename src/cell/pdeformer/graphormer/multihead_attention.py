@@ -2,10 +2,10 @@ r"""Multi-headed attention."""
 from typing import Optional
 import math
 
-import mindspore as ms
-from mindspore import dtype as mstype
-from mindspore import Tensor, nn, ops
-from mindspore.common.initializer import initializer, XavierUniform, Zero, Uniform
+import src.torch_compat as ms
+from src.torch_compat import dtype as mstype
+from src.torch_compat import Tensor, nn, ops
+from src.torch_compat import initializer, XavierUniform, Zero, Uniform
 
 from ...env import ENABLE_DROPOUT
 
@@ -35,7 +35,7 @@ class MultiheadAttention(nn.Cell):
 
     Examples:
         >>> import numpy as np
-        >>> from mindspore import Tensor
+        >>> from src.torch_compat import Tensor
         >>> from src.cell.pdeformer.graphormer.multihead_attention import MultiheadAttention
         >>> x = Tensor(np.random.randn(16, 8, 128), dtype=mstype.float32)
         >>> mha = MultiheadAttention(embed_dim=128, num_heads=8)

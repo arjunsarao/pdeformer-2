@@ -2,11 +2,11 @@ r"""Discrete Fourier transform."""
 import numpy as np
 from scipy.linalg import dft
 
-import mindspore
-import mindspore.common.dtype as mstype
-from mindspore import nn, ops, Tensor, Parameter
-from mindspore.common.initializer import Zero
-from mindspore.ops import operations as P
+import src.torch_compat as ms
+from src.torch_compat import dtype as mstype
+from src.torch_compat import nn, ops, Tensor, Parameter
+from src.torch_compat import Zero
+from src.torch_compat import operations as P
 
 from .check_func import check_param_no_greater, check_param_value, check_param_type, check_param_even
 
@@ -14,7 +14,7 @@ from .check_func import check_param_no_greater, check_param_value, check_param_t
 class DFT1d(nn.Cell):
     r"""One dimensional Discrete Fourier Transformation"""
 
-    def __init__(self, n, modes, last_index, idx=0, inv=False, compute_dtype=mindspore.float32):
+    def __init__(self, n, modes, last_index, idx=0, inv=False, compute_dtype=ms.float32):
         super().__init__()
 
         self.n = n
@@ -48,9 +48,9 @@ class DFT1d(nn.Cell):
                     self.dft_mat_res = self.dft_mat[:, -modes + 1:]
 
                 mat = Tensor(np.zeros(n,), dtype=compute_dtype).reshape(n, 1)
-                self.a_re_res = mindspore.numpy.flip(
+                self.a_re_res = ms.numpy.flip(
                     Tensor(self.dft_mat_res.real, dtype=compute_dtype), axis=-1)
-                self.a_im_res = mindspore.numpy.flip(
+                self.a_im_res = ms.numpy.flip(
                     Tensor(self.dft_mat_res.imag, dtype=compute_dtype), axis=-1)
                 if modes == n // 2 + 1:
                     self.a_re_res = self.concat((mat, self.a_re_res, mat))
@@ -127,7 +127,7 @@ class DFT1d(nn.Cell):
 class DFTn(nn.Cell):
     r"""N dimensional Discrete Fourier Transformation"""
 
-    def __init__(self, shape, modes, dim=None, inv=False, compute_dtype=mindspore.float32):
+    def __init__(self, shape, modes, dim=None, inv=False, compute_dtype=ms.float32):
         super().__init__()
 
         if dim is None:
@@ -145,19 +145,19 @@ class DFTn(nn.Cell):
         return self.dft1_seq(x)
 
 
-def _dftn(shape, modes, dim=None, compute_dtype=mindspore.float32):
+def _dftn(shape, modes, dim=None, compute_dtype=ms.float32):
     dftn_ = DFTn(shape=shape, modes=modes, dim=dim,
                  inv=False, compute_dtype=compute_dtype)
     return dftn_
 
 
-def _idftn(shape, modes, dim=None, compute_dtype=mindspore.float32):
+def _idftn(shape, modes, dim=None, compute_dtype=ms.float32):
     idftn_ = DFTn(shape=shape, modes=modes, dim=dim,
                   inv=True, compute_dtype=compute_dtype)
     return idftn_
 
 
-def dft3(shape, modes, dim=(-3, -2, -1), compute_dtype=mindspore.float32):
+def dft3(shape, modes, dim=(-3, -2, -1), compute_dtype=ms.float32):
     r"""
     Calculate three-dimensional discrete Fourier transform. Corresponding to the rfftn operator in torch.
 
@@ -166,7 +166,7 @@ def dft3(shape, modes, dim=(-3, -2, -1), compute_dtype=mindspore.float32):
         modes (tuple): The length of the output transform axis. The `modes` must be no greater than half of the
             dimension of input 'x'.
         dim (tuple): Dimensions to be transformed.
-        compute_dtype (mindspore.dtype): The type of input tensor. Default: mindspore.float32.
+        compute_dtype (ms.dtype): The type of input tensor. Default: ms.float32.
 
     Inputs:
         - **x** (Tensor, Tensor): The input data. It's 3-D tuple of Tensor. It's a complex,
@@ -181,8 +181,8 @@ def dft3(shape, modes, dim=(-3, -2, -1), compute_dtype=mindspore.float32):
 
     Examples:
         >>> import numpy as np
-        >>> from mindspore import Tensor, ops
-        >>> import mindspore.common.dtype as mstype
+        >>> from src.torch_compat import Tensor, ops
+        >>> from src.torch_compat import dtype as mstype
         >>> from mindflow.cell.neural_operators.dft import dft3
         >>> array = np.ones((6, 6, 6)) * np.arange(1, 7)
         >>> x_re = Tensor(array, dtype=mstype.float32)
@@ -244,7 +244,7 @@ def dft3(shape, modes, dim=(-3, -2, -1), compute_dtype=mindspore.float32):
     return _dftn(shape, modes, dim=dim, compute_dtype=compute_dtype)
 
 
-def idft3(shape, modes, dim=(-3, -2, -1), compute_dtype=mindspore.float32):
+def idft3(shape, modes, dim=(-3, -2, -1), compute_dtype=ms.float32):
     r"""
     Calculate three-dimensional discrete Fourier transform. Corresponding to the irfftn operator in torch.
 
@@ -253,7 +253,7 @@ def idft3(shape, modes, dim=(-3, -2, -1), compute_dtype=mindspore.float32):
         modes (tuple): The length of the output transform axis. The `modes` must be no greater than half of the
             dimension of input 'x'.
         dim (tuple): Dimensions to be transformed.
-        compute_dtype (mindspore.dtype): The type of input tensor. Default: mindspore.float32.
+        compute_dtype (ms.dtype): The type of input tensor. Default: ms.float32.
 
     Inputs:
         - **x** (Tensor, Tensor): The input data. It's 3-D tuple of Tensor. It's a complex, including x real and
@@ -268,8 +268,8 @@ def idft3(shape, modes, dim=(-3, -2, -1), compute_dtype=mindspore.float32):
 
     Examples:
         >>> import numpy as np
-        >>> from mindspore import Tensor, ops
-        >>> import mindspore.common.dtype as mstype
+        >>> from src.torch_compat import Tensor, ops
+        >>> from src.torch_compat import dtype as mstype
         >>> from mindflow.cell.neural_operators.dft import idft3
         >>> array = np.ones((2, 2, 2)) * np.arange(1, 3)
         >>> x_re = Tensor(array, dtype=mstype.float32)
@@ -303,7 +303,7 @@ def idft3(shape, modes, dim=(-3, -2, -1), compute_dtype=mindspore.float32):
     return _idftn(shape, modes, dim=dim, compute_dtype=compute_dtype)
 
 
-def dft2(shape, modes, dim=(-2, -1), compute_dtype=mindspore.float32):
+def dft2(shape, modes, dim=(-2, -1), compute_dtype=ms.float32):
     """
     Calculate two-dimensional discrete Fourier transform. Corresponding to the rfft2 operator in torch.
 
@@ -312,7 +312,7 @@ def dft2(shape, modes, dim=(-2, -1), compute_dtype=mindspore.float32):
         modes (tuple): The length of the output transform axis. The `modes` must be no greater than half of the
             dimension of input 'x'.
         dim (tuple): Dimensions to be transformed.
-        compute_dtype (:class:`mindspore.dtype`): The type of input tensor. Default: mindspore.float32.
+        compute_dtype (:class:`ms.dtype`): The type of input tensor. Default: ms.float32.
 
     Inputs:
         - **x** (Tensor, Tensor): The input data. It's 2-D tuple of Tensor. It's a complex,
@@ -327,8 +327,8 @@ def dft2(shape, modes, dim=(-2, -1), compute_dtype=mindspore.float32):
 
     Examples:
         >>> import numpy as np
-        >>> from mindspore import Tensor, ops
-        >>> import mindspore.common.dtype as mstype
+        >>> from src.torch_compat import Tensor, ops
+        >>> from src.torch_compat import dtype as mstype
         >>> from mindflow.cell.neural_operators.dft import dft2
         >>> array = np.ones((5, 5)) * np.arange(1, 6)
         >>> x_re = Tensor(array, dtype=mstype.float32)
@@ -353,7 +353,7 @@ def dft2(shape, modes, dim=(-2, -1), compute_dtype=mindspore.float32):
     return _dftn(shape, modes, dim=dim, compute_dtype=compute_dtype)
 
 
-def idft2(shape, modes, dim=(-2, -1), compute_dtype=mindspore.float32):
+def idft2(shape, modes, dim=(-2, -1), compute_dtype=ms.float32):
     r"""
     Calculate two-dimensional discrete Fourier transform. Corresponding to the irfft2 operator in torch.
 
@@ -362,7 +362,7 @@ def idft2(shape, modes, dim=(-2, -1), compute_dtype=mindspore.float32):
         modes (tuple): The length of the output transform axis. The `modes` must be no greater than half of the
             dimension of input 'x'.
         dim (tuple): Dimensions to be transformed.
-        compute_dtype (:class:`mindspore.dtype`): The type of input tensor. Default: mindspore.float32.
+        compute_dtype (:class:`ms.dtype`): The type of input tensor. Default: ms.float32.
 
     Inputs:
         - **x** (Tensor, Tensor): The input data. It's 2-D tuple of Tensor. It's a complex,
@@ -377,8 +377,8 @@ def idft2(shape, modes, dim=(-2, -1), compute_dtype=mindspore.float32):
 
     Examples:
         >>> import numpy as np
-        >>> from mindspore import Tensor, ops
-        >>> import mindspore.common.dtype as mstype
+        >>> from src.torch_compat import Tensor, ops
+        >>> from src.torch_compat import dtype as mstype
         >>> from mindflow.cell.neural_operators.dft import idft2
         >>> array = np.ones((2, 2)) * np.arange(1, 3)
         >>> x_re = Tensor(array, dtype=mstype.float32)
@@ -403,7 +403,7 @@ def idft2(shape, modes, dim=(-2, -1), compute_dtype=mindspore.float32):
     return _idftn(shape, modes, dim=dim, compute_dtype=compute_dtype)
 
 
-def dft1(shape, modes, dim=(-1,), compute_dtype=mindspore.float32):
+def dft1(shape, modes, dim=(-1,), compute_dtype=ms.float32):
     r"""
     Calculate one-dimensional discrete Fourier transform. Corresponding to the rfft operator in torch.
 
@@ -412,8 +412,8 @@ def dft1(shape, modes, dim=(-1,), compute_dtype=mindspore.float32):
        modes (int): The length of the output transform axis. The `modes` must be no greater than half of the
             dimension of input 'x'.
        dim (tuple): Dimensions to be transformed.
-       compute_dtype (:class:`mindspore.dtype`): The type of input tensor.
-         Default: mindspore.float32.
+       compute_dtype (:class:`ms.dtype`): The type of input tensor.
+         Default: ms.float32.
 
     Inputs:
        - **x** (Tensor, Tensor): The input data. It's 2-D tuple of Tensor. It's a complex,
@@ -427,8 +427,8 @@ def dft1(shape, modes, dim=(-1,), compute_dtype=mindspore.float32):
        ValueError: If the length of `shape` is no equal to 1.
 
     Examples:
-       >>> from mindspore import Tensor, ops
-       >>> import mindspore.common.dtype as mstype
+       >>> from src.torch_compat import Tensor, ops
+       >>> from src.torch_compat import dtype as mstype
        >>> from mindflow.cell.neural_operators.dft import dft1
        >>> array = [i for i in range(5)]
        >>> x_re = Tensor(array, dtype=mstype.float32)
@@ -448,7 +448,7 @@ def dft1(shape, modes, dim=(-1,), compute_dtype=mindspore.float32):
     return _dftn(shape, modes, dim=dim, compute_dtype=compute_dtype)
 
 
-def idft1(shape, modes, dim=(-1,), compute_dtype=mindspore.float32):
+def idft1(shape, modes, dim=(-1,), compute_dtype=ms.float32):
     r"""
     Calculate one-dimensional discrete Fourier transform. Corresponding to the irfft operator in torch.
 
@@ -457,7 +457,7 @@ def idft1(shape, modes, dim=(-1,), compute_dtype=mindspore.float32):
         modes (int): The length of the output transform axis. The `modes` must be no greater than half of the
             dimension of input 'x'.
         dim (tuple): Dimensions to be transformed.
-        compute_dtype (:class:`mindspore.dtype`): The type of input tensor. Default: mindspore.float32.
+        compute_dtype (:class:`ms.dtype`): The type of input tensor. Default: ms.float32.
 
     Inputs:
         - **x** (Tensor, Tensor): The input data. It's 2-D tuple of Tensor. It's a complex,
@@ -471,8 +471,8 @@ def idft1(shape, modes, dim=(-1,), compute_dtype=mindspore.float32):
         ValueError: If the length of `shape` is no equal to 1.
 
     Examples:
-        >>> from mindspore import Tensor, ops
-        >>> import mindspore.common.dtype as mstype
+        >>> from src.torch_compat import Tensor, ops
+        >>> from src.torch_compat import dtype as mstype
         >>> from mindflow.cell.neural_operators.dft import idft1
         >>> array = [i for i in range(2)]
         >>> x_re = Tensor(array, dtype=mstype.float32)

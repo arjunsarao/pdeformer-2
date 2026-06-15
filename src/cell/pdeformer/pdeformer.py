@@ -1,7 +1,7 @@
 r"""PDEformer model."""
 from omegaconf import DictConfig
-from mindspore import dtype as mstype
-from mindspore import nn, Tensor, ops
+from src.torch_compat import dtype as mstype
+from src.torch_compat import nn, Tensor, ops
 
 from .inr_with_hypernet import get_inr_with_hypernet
 from .graphormer.graphormer_encoder import GraphormerEncoder

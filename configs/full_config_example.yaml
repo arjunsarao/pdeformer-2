@@ -79,7 +79,7 @@ model:
     target_modules: "."  # Default applied to all dense (linear) cells.
     lora_rank: 8
     lora_alpha: 16
-  load_ckpt: none  # or path/to/your/model-size.ckpt
+  load_ckpt: none  # or path/to/your/model-size.pt
 data:
   path: ../data_download  # or any path/to/your/data_download
   type: multi_pde  # {single_pde, multi_pde}

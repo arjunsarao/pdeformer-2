@@ -5,8 +5,8 @@ import time
 from typing import Tuple, Dict, List, Union, Callable
 
 from omegaconf import DictConfig
-from mindspore.dataset import BatchDataset
-from mindspore.communication import get_rank
+from src.torch_compat import BatchDataset
+from src.torch_compat import get_rank
 
 from ..utils_dataload import datasets2loader
 from . import pde_types

@@ -6,7 +6,7 @@ import numpy as np
 from numpy.typing import NDArray
 import h5py
 from omegaconf import DictConfig
-from mindspore import Tensor
+from src.torch_compat import Tensor
 
 from .env import float_dtype
 from .pde_dag import DAGInfoTuple, PfDataTuple

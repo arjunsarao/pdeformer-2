@@ -2,7 +2,7 @@ r"""This module provides functions to compute and record metrics."""
 from typing import Dict
 import numpy as np
 from numpy.typing import NDArray
-from mindspore import Tensor
+from src.torch_compat import Tensor
 
 
 def calculate_l2_error(pred: Tensor, label: Tensor) -> NDArray[float]:

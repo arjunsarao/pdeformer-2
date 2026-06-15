@@ -1,7 +1,9 @@
 r"""Optimizers."""
 from typing import List
+
+import torch
 from omegaconf import DictConfig
-from mindspore import nn
+from src.torch_compat import nn, param_name
 from ..cell.lora import lora_param_filter
 
 
@@ -45,23 +47,25 @@ def get_optimizer(lr_var: List[float],
         elif module.startswith(("prefix=", "startswith=", "begin=", "start=")):
             _, prefix = module.split("=", 1)
             params.extend([param for param in model.trainable_params()
-                           if param.name.startswith(prefix)])
+                           if param_name(param).startswith(prefix)])
         elif module.startswith(("contains=", "suffix=", "regex=")):
             raise NotImplementedError
         else:
             raise ValueError(
                 f"'module_list' contains unexpected value {module}.")
 
+    lr_init = lr_var[0] if isinstance(lr_var, list) else lr_var
     params = [{'params': params,
-               'lr': lr_var,
+               'lr': lr_init,
                'weight_decay': config_train.weight_decay}]
     if config_train.optimizer == 'Adam':
-        optimizer = nn.Adam(params)
+        optimizer = torch.optim.Adam(params)
     elif config_train.optimizer == 'AdamW':
-        optimizer = nn.AdamWeightDecay(params)
+        optimizer = torch.optim.AdamW(params)
     else:
         raise NotImplementedError(
             "'optimizer' should be one of ['Adam', 'AdamW'], "
             f"but got {config_train.optimizer}")
 
+    optimizer.lr_schedule = lr_var
     return optimizer

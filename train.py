@@ -5,16 +5,15 @@ import math
 from typing import Dict, Any
 
 import numpy as np
-import mindspore as ms
-from mindspore import dtype as mstype
-from mindspore import ops, nn, Tensor, context
-from mindspore.communication import init, get_rank
-from mindspore.amp import DynamicLossScaler, auto_mixed_precision
+import torch
+from src.torch_compat import dtype as mstype
+from src.torch_compat import Tensor, context
+from src.torch_compat import DynamicLossScaler, auto_mixed_precision
 
 from src.data import load_dataset, split_data_tuple
 from src.core import (calculate_l2_error, L2ErrorRecord, EvalErrorRecord,
                       LossFunction, get_lr, get_optimizer, DeltaWeightPenalty)
-from src.utils import load_config, init_record, AllGather, set_seed
+from src.utils import load_config, init_record, set_seed
 from src.utils.visual import video_2d
 from src.cell import get_model
 
@@ -29,23 +28,19 @@ def parse_args():
                         choices=[True, False],
                         help="Whether to save intermediate compilation graphs")
     parser.add_argument("--save_graphs_path", type=str, default="./graphs")
-    parser.add_argument("--device_target", type=str, default="Ascend",
-                        choices=["GPU", "Ascend", "CPU"],
+    parser.add_argument("--device_target", type=str, default="CPU",
+                        choices=["GPU", "CPU"],
                         help=("The target device to run. "
-                              "Supporting 'Ascend', 'GPU', 'CPU'."))
+                              "Supporting 'GPU' and 'CPU'."))
     parser.add_argument("--device_id", type=int, default=0,
                         help="ID of the target device")
     parser.add_argument("--no_distributed", action="store_true",
                         help="Disable distributed training (data parallel).")
-    parser.add_argument("--no_data_sink", action="store_true",
-                        help="Disable data sink during training.")
     parser.add_argument("--config_file_path", "-c", type=str, required=True,
                         help="Path of the configuration YAML file.")
 
     input_args = parser.parse_args()
-    input_args.distributed = (input_args.device_target == "Ascend"
-                              and not input_args.no_distributed)
-    input_args.data_sink = not input_args.no_data_sink
+    input_args.distributed = False
 
     return input_args
 
@@ -98,7 +93,8 @@ def eval_loop(dataset_iter, dataset, img_name="result", plot_num=1):
     for data_tuple in dataset_iter:
         input_tuple, label, data_idx = split_data_tuple(data_tuple)  # (tuple, tensor, tensor)
         coordinate = input_tuple[-1]
-        pred = model(*input_tuple)  # [bsz, num_points, dim_out]
+        with torch.no_grad():
+            pred = model(*input_tuple)  # [bsz, num_points, dim_out]
 
         eval_error_tmp = eval_loss_fn(pred, label, coordinate).asnumpy()  # [bsz]
         eval_error_tmp = eval_error_tmp.clip(0, 5)
@@ -202,7 +198,8 @@ def eval_plot_all_vars(dataset_iter, dataset, img_name="result", plot_num=1):
     for data_tuple in dataset_iter:
         input_tuple, label, data_idx = split_data_tuple(data_tuple)  # (tuple, tensor, tensor)
         coordinate = input_tuple[-1]
-        pred = model(*input_tuple)  # [bsz, num_points, dim_out]
+        with torch.no_grad():
+            pred = model(*input_tuple)  # [bsz, num_points, dim_out]
         l2_error_tmp = calculate_l2_error(pred, label)  # [bsz]
 
         # plot label vs. pred
@@ -312,12 +309,6 @@ def train():
     lr_var = get_lr(steps_per_epoch, config.train)
     optimizer = get_optimizer(lr_var, model, config.train)
 
-    # gradient postprocessing
-    if args.distributed:
-        grad_reducer = nn.DistributedGradReducer(optimizer.parameters)
-    else:
-        def grad_reducer(x):
-            return x
     grad_clip_value = config.train.get("grad_clip_value", -1)
 
     # define forward function
@@ -333,32 +324,29 @@ def train():
 
         return loss, pred
 
-    # define gradient function
-    grad_fn = ops.value_and_grad(forward_fn, None, optimizer.parameters, has_aux=True)
+    step_id = 0
 
     # train one step
-    @ms.jit
     def train_step(*data_tuple):
+        nonlocal step_id
         input_tuple, label, _ = split_data_tuple(data_tuple)  # (tuple, tensor, tensor)
-        (loss, pred), grads = grad_fn(input_tuple, label)
+        lr_schedule = getattr(optimizer, "lr_schedule", None)
+        if lr_schedule:
+            lr_value = lr_schedule[min(step_id, len(lr_schedule) - 1)]
+            for group in optimizer.param_groups:
+                group["lr"] = lr_value
 
-        # auto mixed precision
-        if use_fp16:
-            loss = loss_scaler.unscale(loss)
-            grads = loss_scaler.unscale(grads)
+        optimizer.zero_grad(set_to_none=True)
+        loss, pred = forward_fn(input_tuple, label)
+        loss.backward()
 
         if grad_clip_value > 0:
-            grads = ops.clip_by_global_norm(grads, clip_norm=grad_clip_value)
-        grads = grad_reducer(grads)  # distributed training (data parallel)
-        loss = ops.depend(loss, optimizer(grads))
+            torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip_value)
+        optimizer.step()
+        step_id += 1
 
-        return loss, pred
+        return loss.detach(), pred.detach()
 
-    # data sink
-    if args.data_sink:
-        sink_process = ms.data_sink(train_step, dataset_train, 1)
-    else:
-        dataset_iter = dataset_train.create_tuple_iterator()
     dataset_train_size = dataset_train.get_dataset_size()
 
     # training loop
@@ -369,16 +357,10 @@ def train():
     for epoch in range(1, 1 + config.train.epochs):
         model.set_train()
         loss_all = []
-        if args.data_sink:
-            # data sink
-            for _ in range(dataset_train_size):
-                loss, _ = sink_process()
-                loss_all.append(loss.asnumpy())
-        else:
-            # not data sink
-            for data_tuple in dataset_iter:
-                loss, _ = train_step(*data_tuple)
-                loss_all.append(loss.asnumpy())
+        dataset_iter = dataset_train.create_tuple_iterator()
+        for data_tuple in dataset_iter:
+            loss, _ = train_step(*data_tuple)
+            loss_all.append(loss.asnumpy())
 
         if (epoch - 1) % print_interval == 0:
             loss = np.mean(loss_all)  # [dataset_train_size] -> []
@@ -415,7 +397,7 @@ if __name__ == "__main__":
     # args
     args = parse_args()
 
-    # mindspore context
+    # PyTorch context
     context.set_context(
         save_graphs=args.save_graphs,
         save_graphs_path=args.save_graphs_path,
@@ -424,27 +406,13 @@ if __name__ == "__main__":
         context.set_context(mode=context.GRAPH_MODE)
     else:
         context.set_context(mode=context.PYNATIVE_MODE)
-    if ms.__version__ >= "2.3":
-        context.set_context(jit_config={"jit_level": "O2"})
-    use_ascend = context.get_context(attr_key="device_target") == "Ascend"
-    use_fp16 = use_ascend
-    # context.set_context(max_call_depth=10000)  # for larger models
+    use_fp16 = False
 
     # compute_type
     compute_type = mstype.float16 if use_fp16 else mstype.float32
 
-    # distributed training (data parallel)
+    # Distributed PyTorch training is not enabled in this port yet.
     rank_id = None
-    if args.distributed:
-        init()  # enable HCCL
-        context.set_auto_parallel_context(
-            parallel_mode=ms.ParallelMode.DATA_PARALLEL,
-            gradients_mean=True)
-        rank_id = get_rank()
-        all_gather = AllGather()  # nn.cell for ops.ALLGather()
-    elif use_ascend:
-        context.set_context(device_id=args.device_id)
-    # context.set_context(deterministic="ON")
 
     # load config file
     config = load_config(args.config_file_path)

@@ -7,11 +7,11 @@ Reference: https://arxiv.org/abs/2106.09685
 import re
 import math
 from omegaconf import DictConfig
-from mindspore import nn, ops, Tensor, Parameter
-from mindspore import dtype as mstype
-from mindspore.ops import operations as P
-from mindspore.ops import functional as F
-from mindspore.common.initializer import initializer, HeUniform
+from src.torch_compat import nn, ops, Tensor, Parameter, param_name
+from src.torch_compat import dtype as mstype
+from src.torch_compat import operations as P
+from src.torch_compat import functional as F
+from src.torch_compat import initializer, HeUniform
 
 
 class LoRADense(nn.Dense):
@@ -24,8 +24,8 @@ class LoRADense(nn.Dense):
         lora_out_channels (int): The number of channels in the output space.
         lora_rank(int): The number of rows(columns) in LoRA matrices.
         lora_alpha(float): A constant in lora_rank.
-        param_init_type(:class:`mindspore.dtype`): The type of data in initialized tensor.
-        compute_dtype(:class:`mindspore.dtype`): The compute type of data.
+        param_init_type(:class:`ms.dtype`): The type of data in initialized tensor.
+        compute_dtype(:class:`ms.dtype`): The compute type of data.
     """
 
     def __init__(self,
@@ -134,4 +134,4 @@ def add_lora_into_net_(net: nn.Cell,
 
 def lora_param_filter(param: Parameter) -> bool:
     r"""Filter LoRA parameters."""
-    return param.name[:-1].endswith(".mindpet_delta_lora_")
+    return param_name(param).endswith(("mindpet_delta_lora_a", "mindpet_delta_lora_b"))

@@ -1,7 +1,7 @@
 r"""Graphormer layer"""
-from mindspore import dtype as mstype
-from mindspore import Tensor, nn
-from mindspore.common.initializer import initializer, Normal
+from src.torch_compat import dtype as mstype
+from src.torch_compat import Tensor, nn
+from src.torch_compat import initializer, Normal
 
 
 class GraphNodeFeature(nn.Cell):
@@ -29,8 +29,8 @@ class GraphNodeFeature(nn.Cell):
         ``Ascend`` ``GPU``
 
     Examples:
-        >>> import mindspore.nn as nn
-        >>> from mindspore import Tensor
+        >>> from src.torch_compat import nn
+        >>> from src.torch_compat import Tensor
         >>> from src.cell.pdeformer.graphormer.graphormer_layer import GraphNodeFeature
         >>> num_heads = 8
         >>> num_node_type = 10
@@ -120,8 +120,8 @@ class GraphAttnBias(nn.Cell):
         ``Ascend`` ``GPU``
 
     Examples:
-        >>> import mindspore.nn as nn
-        >>> from mindspore import Tensor
+        >>> from src.torch_compat import nn
+        >>> from src.torch_compat import Tensor
         >>> from src.cell.pdeformer.graphormer.graphormer_layer import GraphAttnBias
         >>> num_heads = 8
         >>> num_spatial = 10

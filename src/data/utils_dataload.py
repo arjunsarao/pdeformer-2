@@ -5,9 +5,9 @@ import bisect
 
 import numpy as np
 from numpy.typing import NDArray
-from mindspore import Tensor
-from mindspore.dataset import GeneratorDataset, BatchDataset, TupleIterator
-from mindspore.communication import get_rank, get_group_size
+from src.torch_compat import Tensor
+from src.torch_compat import GeneratorDataset, BatchDataset, TupleIterator
+from src.torch_compat import get_rank, get_group_size
 
 from .env import DATASET_INDEXED, int_dtype
 

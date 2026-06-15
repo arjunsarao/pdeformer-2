@@ -2,8 +2,8 @@ r"""PolyINR model."""
 import math
 from typing import Optional, Tuple
 
-from mindspore import dtype as mstype
-from mindspore import Tensor, nn, ops
+from src.torch_compat import dtype as mstype
+from src.torch_compat import Tensor, nn, ops
 
 from ...basic_block import MLP, UniformInitDense, Scale, Sine
 
@@ -44,7 +44,7 @@ class PolyINR(nn.Cell):
 
     Examples:
         >>> import numpy as np
-        >>> from mindspore import Tensor, nn
+        >>> from src.torch_compat import Tensor, nn
         >>> from src.cell.pdeformer.function_encoder import PolyINR
         >>> x = Tensor(np.random.randn(2, 10, 3), mstype.float32)
         >>> poly_inr = PolyINR(3, 64, 128, 2, compute_dtype=mstype.float32)
@@ -223,7 +223,7 @@ class PolyINRWithHypernet(nn.Cell):
 
     Examples:
         >>> import numpy as np
-        >>> from mindspore import Tensor, nn
+        >>> from src.torch_compat import Tensor, nn
         >>> from src.cell.pdeformer.function_encoder import PolyINRWithHypernet
         >>> inr_dim_in = 2
         >>> inr_dim_out = 1

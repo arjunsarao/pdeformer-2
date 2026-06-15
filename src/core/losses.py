@@ -4,9 +4,9 @@ from abc import abstractmethod
 
 import numpy as np
 from omegaconf import OmegaConf, DictConfig
-from mindspore import nn, ops, Tensor, Parameter, float32, context
-from mindspore.ops import functional as F
-from mindspore.ops import operations as P
+from src.torch_compat import nn, ops, Tensor, Parameter, float32, context
+from src.torch_compat import functional as F
+from src.torch_compat import operations as P
 
 from ..cell.baseline.dft import dft2
 
@@ -113,12 +113,12 @@ class PerSampleMSELoss(PerSampleLossBase):
         ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
-        >>> import mindspore
-        >>> from mindspore import Tensor, nn
+        >>> import src.torch_compat as ms
+        >>> from src.torch_compat import Tensor, nn
         >>> import numpy as np
         >>> loss = PerSampleMSELoss()
-        >>> logits = Tensor(np.ones((4, 2, 3)), mindspore.float32)
-        >>> labels = Tensor(np.ones((4, 1, 1)), mindspore.float32)
+        >>> logits = Tensor(np.ones((4, 2, 3)), ms.float32)
+        >>> labels = Tensor(np.ones((4, 1, 1)), ms.float32)
         >>> output = loss(logits, labels)
         >>> print(output.shape)
         (4,)
@@ -153,12 +153,12 @@ class PerSampleRMSELoss(PerSampleMSELoss):
         ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
-        >>> import mindspore
-        >>> from mindspore import Tensor, nn
+        >>> import src.torch_compat as ms
+        >>> from src.torch_compat import Tensor, nn
         >>> import numpy as np
         >>> loss = PerSampleRMSELoss()
-        >>> logits = Tensor(np.ones((4, 2, 3)), mindspore.float32)
-        >>> labels = Tensor(np.ones((4, 1, 1)), mindspore.float32)
+        >>> logits = Tensor(np.ones((4, 2, 3)), ms.float32)
+        >>> labels = Tensor(np.ones((4, 1, 1)), ms.float32)
         >>> output = loss(logits, labels)
         >>> print(output.shape)
         (4,)
@@ -207,12 +207,12 @@ class PerSampleMAELoss(PerSampleLossBase):
         ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
-        >>> import mindspore
-        >>> from mindspore import Tensor, nn
+        >>> import src.torch_compat as ms
+        >>> from src.torch_compat import Tensor, nn
         >>> import numpy as np
         >>> loss = PerSampleMAELoss()
-        >>> logits = Tensor(np.ones((4, 2, 3)), mindspore.float32)
-        >>> labels = Tensor(np.ones((4, 1, 1)), mindspore.float32)
+        >>> logits = Tensor(np.ones((4, 2, 3)), ms.float32)
+        >>> labels = Tensor(np.ones((4, 1, 1)), ms.float32)
         >>> output = loss(logits, labels)
         >>> print(output.shape)
         (4,)
@@ -257,12 +257,12 @@ class PerSampleMixedLoss(PerSampleLossBase):
         ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
-        >>> import mindspore
-        >>> from mindspore import Tensor, nn
+        >>> import src.torch_compat as ms
+        >>> from src.torch_compat import Tensor, nn
         >>> import numpy as np
         >>> loss = PerSampleMAELoss()
-        >>> logits = Tensor(np.ones((4, 2, 3)), mindspore.float32)
-        >>> labels = Tensor(np.ones((4, 1, 1)), mindspore.float32)
+        >>> logits = Tensor(np.ones((4, 2, 3)), ms.float32)
+        >>> labels = Tensor(np.ones((4, 1, 1)), ms.float32)
         >>> output = loss(logits, labels)
         >>> print(output.shape)
         (4,)
@@ -367,12 +367,12 @@ class PerSampleH1Loss(PerSampleLossBase):
         ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
-        >>> import mindspore
-        >>> from mindspore import Tensor, nn
+        >>> import src.torch_compat as ms
+        >>> from src.torch_compat import Tensor, nn
         >>> import numpy as np
         >>> loss = PerSampleRMSELoss()
-        >>> logits = Tensor(np.ones((4, 2, 3)), mindspore.float32)
-        >>> labels = Tensor(np.ones((4, 1, 1)), mindspore.float32)
+        >>> logits = Tensor(np.ones((4, 2, 3)), ms.float32)
+        >>> labels = Tensor(np.ones((4, 1, 1)), ms.float32)
         >>> output = loss(logits, labels)
         >>> print(output.shape)
         (4,)
@@ -429,12 +429,12 @@ class PerSampleH1LossT(PerSampleLossBase):
         ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
-        >>> import mindspore
-        >>> from mindspore import Tensor, nn
+        >>> import src.torch_compat as ms
+        >>> from src.torch_compat import Tensor, nn
         >>> import numpy as np
         >>> loss = PerSampleRMSELoss()
-        >>> logits = Tensor(np.ones((4, 2, 3)), mindspore.float32)
-        >>> labels = Tensor(np.ones((4, 1, 1)), mindspore.float32)
+        >>> logits = Tensor(np.ones((4, 2, 3)), ms.float32)
+        >>> labels = Tensor(np.ones((4, 1, 1)), ms.float32)
         >>> output = loss(logits, labels)
         >>> print(output.shape)
         (4,)
@@ -489,12 +489,12 @@ class PerSampleH1LossXYZ(PerSampleLossBase):
         ``Ascend`` ``GPU`` ``CPU``
 
     Examples:
-        >>> import mindspore
-        >>> from mindspore import Tensor, nn
+        >>> import src.torch_compat as ms
+        >>> from src.torch_compat import Tensor, nn
         >>> import numpy as np
         >>> loss = PerSampleRMSELoss()
-        >>> logits = Tensor(np.ones((4, 2, 3)), mindspore.float32)
-        >>> labels = Tensor(np.ones((4, 1, 1)), mindspore.float32)
+        >>> logits = Tensor(np.ones((4, 2, 3)), ms.float32)
+        >>> labels = Tensor(np.ones((4, 1, 1)), ms.float32)
         >>> output = loss(logits, labels)
         >>> print(output.shape)
         (4,)

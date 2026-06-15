@@ -1,6 +1,6 @@
 r"""Two-Dimensional U-Net"""
-from mindspore import ops, nn, Tensor
-import mindspore.common.dtype as mstype
+from src.torch_compat import ops, nn, Tensor
+from src.torch_compat import dtype as mstype
 
 
 class DoubleConv(nn.Cell):
@@ -119,10 +119,10 @@ class UNet2D(nn.Cell):
 
     Examples:
         >>> import numpy as np
-        >>> from mindspore import Tensor
+        >>> from src.torch_compat import Tensor
         >>> from model.baseline.unet2d import UNet2D
         >>> unet = UNet2D(2, 2)
-        >>> x = Tensor(np.random.rand(8, 2, 256, 256), mindspore.float32) # [B, C, H, W]
+        >>> x = Tensor(np.random.rand(8, 2, 256, 256), ms.float32) # [B, C, H, W]
         >>> y = unet(x) # [B, C, H, W]
         >>> print(y.shape)
         (8, 2, 256, 256)

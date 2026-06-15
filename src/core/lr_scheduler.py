@@ -2,7 +2,6 @@ r"""This module provides different learning rate scheduler."""
 from typing import List, Optional
 from omegaconf import DictConfig
 import numpy as np
-from mindspore import nn
 
 
 def linear_warmup_lr(lr_list: List[float],
@@ -56,16 +55,26 @@ def get_lr_list(steps_per_epoch: int,
     if lr_scheduler_type in ['piecewise_constant', 'multi_step', 'mstep']:
         milestones = [int(total_steps * x) for x in lr_milestones]
         learning_rates = [lr_init * (lr_decay**x) for x in range(len(milestones))]
-        lr_list = nn.piecewise_constant_lr(milestones, learning_rates)
+        lr_list = []
+        prev_step = 0
+        for milestone, lr_value in zip(milestones, learning_rates):
+            lr_list.extend([lr_value] * max(milestone - prev_step, 0))
+            prev_step = milestone
+        if len(lr_list) < total_steps:
+            lr_list.extend([learning_rates[-1]] * (total_steps - len(lr_list)))
+        lr_list = lr_list[:total_steps]
     elif lr_scheduler_type in ['exponential_decay', 'exponential', 'exp']:
-        lr_list = nn.exponential_decay_lr(
-            lr_init, lr_decay, total_steps, steps_per_epoch, epochs)
+        lr_list = [
+            lr_init * (lr_decay ** (step // steps_per_epoch))
+            for step in range(total_steps)
+        ]
     elif lr_scheduler_type in ['cosine_decay', 'cos']:
-        lr_list = nn.cosine_decay_lr(min_lr=0.01 * lr_init,
-                                     max_lr=lr_init,
-                                     total_step=total_steps,
-                                     step_per_epoch=steps_per_epoch,
-                                     decay_epoch=epochs)
+        min_lr = 0.01 * lr_init
+        lr_list = [
+            min_lr + 0.5 * (lr_init - min_lr)
+            * (1 + np.cos(np.pi * step / max(total_steps - 1, 1)))
+            for step in range(total_steps)
+        ]
     else:
         raise ValueError(
             "The type of lr_scheduler should be in the set of "

@@ -2,9 +2,9 @@ r"""Some basic network blocks."""
 
 import math
 
-from mindspore import dtype as mstype
-from mindspore import nn, ops, Tensor
-from mindspore.common.initializer import initializer, Uniform
+from src.torch_compat import dtype as mstype
+from src.torch_compat import nn, ops, Tensor
+from src.torch_compat import initializer, Uniform
 
 
 class UniformInitDense(nn.Dense):
@@ -29,7 +29,7 @@ class UniformInitDense(nn.Dense):
 
     Examples:
         >>> import numpy as np
-        >>> from mindspore import Tensor
+        >>> from src.torch_compat import Tensor
         >>> from src.cell.basic_block import UniformInitDense
         >>> dense = UniformInitDense(10, 5, has_bias=True, scale=0.1)
         >>> x = Tensor(np.random.rand(16, 10), mstype.float32)
@@ -100,8 +100,8 @@ class MLP(nn.Cell):
 
     Examples:
         >>> import numpy as np
-        >>> from mindspore import Tensor
-        >>> from mindspore import dtype as mstype
+        >>> from src.torch_compat import Tensor
+        >>> from src.torch_compat import dtype as mstype
         >>> from src.cell.basic_block import MLP
         >>> mlp = MLP(dim_in=10, dim_out=5, dim_hidden=128, num_layers=3)
         >>> x = Tensor(np.random.rand(16, 10), mstype.float32)
@@ -184,7 +184,7 @@ class CoordPositionalEncoding(nn.Cell):
 
     Examples:
         >>> import numpy as np
-        >>> from mindspore import Tensor
+        >>> from src.torch_compat import Tensor
         >>> from src.cell.basic_block import CoordPositionalEncoding
         >>> pos_enc = CoordPositionalEncoding(num_pos_enc=2, period=2.0)
         >>> x = Tensor(np.random.rand(16, 10), mstype.float32)
@@ -226,7 +226,7 @@ class Sine(nn.Cell):
 
     Examples:
         >>> import numpy as np
-        >>> from mindspore import Tensor
+        >>> from src.torch_compat import Tensor
         >>> from src.cell.basic_block import Sine
         >>> sine = Sine(w0=1.0)
         >>> x = Tensor(np.random.rand(16, 10), mstype.float32)
@@ -261,7 +261,7 @@ class Scale(nn.Cell):
 
     Examples:
         >>> import numpy as np
-        >>> from mindspore import Tensor
+        >>> from src.torch_compat import Tensor
         >>> from src.cell.basic_block import Sine
         >>> scale = Scale(a=1.0)
         >>> x = Tensor(np.random.rand(16, 10), mstype.float32)

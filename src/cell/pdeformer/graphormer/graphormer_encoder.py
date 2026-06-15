@@ -1,8 +1,8 @@
 r"""Graphormer encoder"""
 from typing import Optional
 
-from mindspore import dtype as mstype
-from mindspore import Tensor, nn, ops
+from src.torch_compat import dtype as mstype
+from src.torch_compat import Tensor, nn, ops
 
 from .graphormer_layer import GraphNodeFeature, GraphAttnBias
 from .graphormer_encoder_layer import GraphormerEncoderLayer
@@ -56,7 +56,7 @@ class GraphormerEncoder(nn.Cell):
 
     Examples:
         >>> import numpy as np
-        >>> from mindspore import Tensor
+        >>> from src.torch_compat import Tensor
         >>> from src.cell.pdeformer.graphormer.graphormer_encoder import GraphormerEncoder
         >>> num_node_type = 5
         >>> num_in_degree = 10

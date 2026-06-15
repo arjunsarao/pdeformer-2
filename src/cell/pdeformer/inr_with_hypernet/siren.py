@@ -2,9 +2,9 @@ r"""Siren model."""
 from typing import Optional
 import math
 
-from mindspore import dtype as mstype
-from mindspore import Tensor, nn, ops
-from mindspore.common.initializer import initializer, Uniform
+from src.torch_compat import dtype as mstype
+from src.torch_compat import Tensor, nn, ops
+from src.torch_compat import initializer, Uniform
 
 from ...basic_block import MLP, CoordPositionalEncoding, Sine
 
@@ -39,8 +39,8 @@ class Siren(nn.Cell):
         ``Ascend`` ``GPU``
 
     Examples:
-        >>> import mindspore as ms
-        >>> from mindspore import nn
+        >>> import src.torch_compat as ms
+        >>> from src.torch_compat import nn
         >>> from src.cell.pdeformer.inr.siren import Siren
         >>> inr_dim_in = 2
         >>> inr_dim_out = 1
@@ -168,8 +168,8 @@ class SirenWithHypernet(nn.Cell):
         ``Ascend`` ``GPU``
 
     Examples:
-        >>> import mindspore as ms
-        >>> from mindspore import nn
+        >>> import src.torch_compat as ms
+        >>> from src.torch_compat import nn
         >>> from src.cell.pdeformer.inr.siren import SirenWithHypernet
         >>> inr_dim_in = 2
         >>> inr_dim_out = 1

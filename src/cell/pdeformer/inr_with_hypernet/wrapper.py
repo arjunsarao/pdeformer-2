@@ -1,7 +1,7 @@
 r"""Wrapper of INRs with hypernet."""
 from omegaconf import DictConfig
-from mindspore import dtype as mstype
-from mindspore import nn
+from src.torch_compat import dtype as mstype
+from src.torch_compat import nn
 
 from .siren import SirenWithHypernet
 from .mfn import MFNNetWithHypernet

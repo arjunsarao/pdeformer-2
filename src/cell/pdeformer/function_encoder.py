@@ -4,8 +4,8 @@ import math
 from abc import abstractmethod
 from omegaconf import DictConfig
 import numpy as np
-from mindspore import nn, Tensor, ops
-from mindspore import dtype as mstype
+from src.torch_compat import nn, Tensor, ops
+from src.torch_compat import dtype as mstype
 
 from ..basic_block import MLP
 from .inr_with_hypernet import Siren, MFNNet, PolyINR
@@ -30,7 +30,7 @@ class DeepSetFuncEncoder(nn.Cell):
 
     Examples:
         >>> import numpy as np
-        >>> from mindspore import Tensor, nn
+        >>> from src.torch_compat import Tensor, nn
         >>> from src.cell.pdeformer.function_encoder import DeepSetFuncEncoder
         >>> x = Tensor(np.random.randn(2, 10, 3), mstype.float32)
         >>> encoder = DeepSetFuncEncoder(3, 64, 128, 2, point_fn="poly_inr")
@@ -94,7 +94,7 @@ class WeightedDeepSetFuncEncoder(nn.Cell):
 
     Examples:
         >>> import numpy as np
-        >>> from mindspore import Tensor, nn
+        >>> from src.torch_compat import Tensor, nn
         >>> from src.cell.pdeformer.function_encoder import WeightedDeepSetFuncEncoder
         >>> x = Tensor(np.random.randn(2, 10, 3), mstype.float32)
         >>> encoder = WeightedDeepSetFuncEncoder(3, 64, 128, 5, point_fn="poly_inr")
@@ -214,7 +214,7 @@ class Patched1DFuncEncoder(nn.Cell):
 
     Examples:
         >>> import numpy as np
-        >>> from mindspore import Tensor, nn
+        >>> from src.torch_compat import Tensor, nn
         >>> from src.cell.pdeformer.function_encoder import PatchedFuncEncoder
         >>> dim_in, dim_out, dim_hidden, num_layers, patch_len = 3, 256, 256, 5, 4
         >>> num_points = 128
@@ -352,9 +352,9 @@ class Patched2DConvFuncEncoder(nn.Cell):
 
     Examples:
         >>> import numpy as np
-        >>> from mindspore import Tensor, nn
+        >>> from src.torch_compat import Tensor, nn
         >>> from src.cell.pdeformer.function_encoder import Patched2D_ConvFuncEncoder
-        >>> from mindspore import dtype as mstype
+        >>> from src.torch_compat import dtype as mstype
         >>> dim_in, dim_out, dim_hidden, num_layers = 3, 256, 256, 5
         >>> resolution, num_patches = 128, 4
         >>> x = Tensor(np.random.randn(2, resolution, resolution, dim_in), mstype.float32)

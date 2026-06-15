@@ -1,10 +1,11 @@
 r"""This module provides a wrapper for different models."""
+import os
 from typing import Optional
 
 from omegaconf import DictConfig
-import mindspore as ms
-from mindspore import nn, context
-from mindspore import dtype as mstype
+import src.torch_compat as ms
+from src.torch_compat import nn, context
+from src.torch_compat import dtype as mstype
 
 from .pdeformer import PDEformer
 from .baseline import DeepONet, FNO, UNet2D, CNNDeepONet
@@ -18,10 +19,7 @@ def get_model(config: DictConfig,
               compute_dtype=None) -> nn.Cell:
     r"""Get the model according to the config."""
     if compute_dtype is None:  # set automatically
-        if context.get_context(attr_key='device_target') == "Ascend":
-            compute_dtype = mstype.float16
-        else:
-            compute_dtype = mstype.float32
+        compute_dtype = mstype.float32
 
     # define network model
     if config.model_type == "pdeformer":
@@ -96,7 +94,21 @@ def get_model(config: DictConfig,
     # load pre-trained model weights
     load_ckpt = config.model.get("load_ckpt", "none")
     if load_ckpt.lower() != "none":
-        param_dict = ms.load_checkpoint(load_ckpt)
+        try:
+            param_dict = ms.load_checkpoint(load_ckpt)
+        except Exception as err:
+            alt_path = os.path.splitext(load_ckpt)[0] + ".pt"
+            if load_ckpt.endswith(".ckpt") and os.path.exists(alt_path):
+                param_dict = ms.load_checkpoint(alt_path)
+                if record is not None:
+                    record.print(f"Loaded PyTorch checkpoint fallback: {alt_path}")
+                else:
+                    print(f"Loaded PyTorch checkpoint fallback: {alt_path}")
+            else:
+                raise RuntimeError(
+                    "PyTorch port expects checkpoints saved as torch state_dict "
+                    "files (for example '.pt'). Convert the legacy MindSpore "
+                    f"checkpoint first: {load_ckpt}") from err
         param_not_load, checkpoint_not_load = ms.load_param_into_net(model, param_dict)
         if param_not_load or checkpoint_not_load:  # either list is non-empty
             warning_str = ("WARNING: These model parameters are not loaded: "

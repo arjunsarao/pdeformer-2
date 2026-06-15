@@ -11,7 +11,7 @@ from argparse import Namespace
 import pickle
 import pandas as pd
 from omegaconf import OmegaConf, DictConfig
-from mindspore import SummaryRecord, Tensor, save_checkpoint, nn
+from src.torch_compat import SummaryRecord, Tensor, save_checkpoint, nn
 
 from .visual import plot_l2_error_and_epochs
 
