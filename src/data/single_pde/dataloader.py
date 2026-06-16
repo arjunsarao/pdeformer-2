@@ -10,9 +10,9 @@ from ..utils_dataload import Dataset, datasets2loader, concat_datasets
 from ..multi_pde.dataloader import StaticDatasetFakeUpdater
 from .basics import pde_type_class_dict, SinglePDEInputFileDataset
 # update 'pde_type_class_dict'
-from . import dataset_cart1, dataset_cart2, dataset_scat1
+from . import dataset_cart1, dataset_cart2, dataset_scat1, dataset_custom
 
-_data_modules = [dataset_cart1, dataset_cart2, dataset_scat1]
+_data_modules = [dataset_cart1, dataset_cart2, dataset_scat1, dataset_custom]
 
 
 class PDEOutputDataset(Dataset):

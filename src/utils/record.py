@@ -74,8 +74,12 @@ class Record:
                  enable_summary: bool = True,
                  enable_plot: bool = True,
                  enable_table: bool = True,
+                 wandb_config: DictConfig = None,
+                 config: DictConfig = None,
                  inverse_problem: bool = False) -> None:
         self.enable_record = enable_record
+        self.enable_wandb = False
+        self.wandb_run = None
         self.record_dir = os.path.join(root_dir, time.strftime('%Y-%m-%d-%H-%M-%S'))
         self.ckpt_dir = os.path.join(self.record_dir, 'ckpt')
         self.pkl_dir = os.path.join(self.record_dir, 'pkl')
@@ -98,6 +102,38 @@ class Record:
 
         # logger
         self.logger = create_logger(path=os.path.join(self.record_dir, "results.log"))
+
+        # Weights & Biases
+        if wandb_config is not None and wandb_config.get("enabled", False):
+            try:
+                import wandb  # pylint: disable=import-outside-toplevel
+            except ImportError as err:
+                raise ImportError(
+                    "wandb tracking is enabled, but the 'wandb' package is not "
+                    "installed. Install it with `uv add wandb`, or set "
+                    "`wandb.enabled: false` in the config."
+                ) from err
+
+            wandb_tags = wandb_config.get("tags", [])
+            if wandb_tags is None:
+                wandb_tags = []
+            wandb_init_kwargs = {
+                "project": wandb_config.get("project", "pdeformer-2"),
+                "entity": wandb_config.get("entity", None),
+                "name": wandb_config.get("name", None),
+                "group": wandb_config.get("group", None),
+                "tags": list(wandb_tags),
+                "dir": self.record_dir,
+                "mode": wandb_config.get("mode", None),
+                "config": OmegaConf.to_container(config, resolve=True) if config is not None else None,
+            }
+            wandb_init_kwargs = {
+                key: value for key, value in wandb_init_kwargs.items()
+                if value is not None
+            }
+            self.wandb_run = wandb.init(**wandb_init_kwargs)
+            self.enable_wandb = True
+            self.wandb_run.summary["record_dir"] = self.record_dir
 
         # Mindinsight SummaryRecord
         self.enable_summary = enable_summary
@@ -127,6 +163,9 @@ class Record:
     def add_scalar(self, tag: str, value: float, step: int) -> None:
         r"""Record the change of 'tag' with step."""
         if self.enable_record:
+            if self.enable_wandb:
+                self.wandb_run.log({tag: value}, step=step)
+
             if self.enable_summary:
                 self.summary.add_value("scalar", tag, Tensor([value]))
                 self.summary.record(step)
@@ -139,6 +178,13 @@ class Record:
     def add_dict(self, step: int, dic: dict, prefix: str = "") -> None:
         r"""Record the changes of items in 'dic' with step."""
         if self.enable_record:
+            if self.enable_wandb:
+                log_dict = {}
+                for key, value in dic.items():
+                    tag = key if prefix == "" else f"{prefix}/{key}"
+                    log_dict[tag] = value
+                self.wandb_run.log(log_dict, step=step)
+
             if self.enable_summary:
                 for key, value in dic.items():
                     if prefix == "":
@@ -182,6 +228,9 @@ class Record:
 
             if self.enable_summary:
                 self.summary.close()
+
+            if self.enable_wandb:
+                self.wandb_run.finish()
 
     def copy_file(self, src_file_path: str, dest_file_name: str = "config.yaml") -> None:
         r"""Copy src_file to dst_file."""
@@ -260,6 +309,8 @@ def init_record(rank_id: int,
     record = Record(config.record_dir,
                     enable_record=enable_record,
                     enable_summary=False,
+                    wandb_config=config.get("wandb", None),
+                    config=config,
                     inverse_problem=inverse_problem)
     # copy the config file to the record directory
     record.copy_file(args.config_file_path, "config.yaml")

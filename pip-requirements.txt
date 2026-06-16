@@ -1,7 +1,0 @@
-omegaconf
-torch
-h5py==3.9.0
-networkx
-matplotlib
-einops
-pandas

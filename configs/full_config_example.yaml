@@ -245,3 +245,11 @@ fno3d:  # applies to {unet2d, fno2d, fno3d}
   channels: 20
   depths: 4
 record_dir: "exp/debug"
+wandb:
+  enabled: False
+  project: pdeformer-2
+  entity: null
+  name: null
+  group: null
+  tags: []
+  mode: online  # online, offline, or disabled

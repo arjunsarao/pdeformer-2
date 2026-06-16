@@ -841,10 +841,21 @@ def save_checkpoint(model: torch_nn.Module, path: str):
 
 
 def load_checkpoint(path: str):
-    return torch.load(path, map_location="cpu")
+    checkpoint = torch.load(path, map_location="cpu")
+    return unwrap_checkpoint_state_dict(checkpoint)
+
+
+def unwrap_checkpoint_state_dict(checkpoint):
+    if isinstance(checkpoint, dict):
+        for key in ("state_dict", "model_state_dict", "model"):
+            state_dict = checkpoint.get(key)
+            if isinstance(state_dict, dict):
+                return state_dict
+    return checkpoint
 
 
 def load_param_into_net(model: torch_nn.Module, param_dict: dict):
+    param_dict = unwrap_checkpoint_state_dict(param_dict)
     state = model.state_dict()
     loadable = {}
     unexpected = []

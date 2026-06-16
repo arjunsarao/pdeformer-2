@@ -18,3 +18,4 @@ rank_*
 *.pt
 kernel*
 .DS_Store
+*.hdf5
