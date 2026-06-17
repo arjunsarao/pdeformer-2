@@ -6,7 +6,7 @@ model:
   load_ckpt: model-L.pt
 
 data:
-  path: data/burgers2d
+  path: data/allen_cahn2d
   type: single_pde
   num_workers: 0
   num_samples_per_file:
@@ -17,9 +17,9 @@ data:
     max_n_function_nodes: 4
     disconn_attn_bias: -inf
   single_pde:
-    param_name: burgers2d_viscous
+    param_name: allen_cahn2d
     regularize_ratio: 0.
-    train: [burgers2d_viscous]
+    train: [allen_cahn2d]
 
 train:
   total_batch_size: 1
@@ -38,10 +38,10 @@ eval:
   plot_num_per_type: 0
   dataset_per_type: 1
 
-record_dir: exp/finetune/burgers2d_viscous/model-L
+record_dir: exp/finetune/allen_cahn2d/model-L
 wandb:
   enabled: true
   project: pdeformer-2-finetuning
-  name: burgers2d-viscous-model-L-2
-  tags: [finetune, burgers2d, model-L, pdeformer-2]
+  name: allen-cahn2d-model-L
+  tags: [finetune, allen-cahn2d, reaction-diffusion, model-L, pdeformer-2]
   mode: online

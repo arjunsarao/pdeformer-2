@@ -805,7 +805,7 @@ class BatchDataset:
                                  num_workers=num_workers, drop_last=False)
 
     def create_tuple_iterator(self):
-        return iter(self)
+        return self
 
     def get_dataset_size(self) -> int:
         return len(self.loader)

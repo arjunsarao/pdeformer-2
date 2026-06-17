@@ -19,3 +19,4 @@ rank_*
 kernel*
 .DS_Store
 *.hdf5
+slurm_logs/

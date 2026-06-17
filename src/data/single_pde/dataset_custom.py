@@ -91,3 +91,72 @@ class ViscousBurgers2DInputDataset(CartesianGridInputFileDataset):
                     v_ * v_.dy,
                     -(nu_v * (v_.dx.dx + v_.dy.dy)))
         return pde
+
+
+@register_pde_type("allen_cahn2d", "allen-cahn2d", "allen_cahn")
+class AllenCahn2DInputDataset(CartesianGridInputFileDataset):
+    r"""Load generated 2D Allen-Cahn reaction-diffusion data."""
+    n_vars: int = 1
+    var_latex = "u"
+    pde_latex = (
+        r"$u_t-\epsilon(u_{xx}+u_{yy})-\rho(u-u^3)=0$"
+    )
+
+    def __init__(self, config: DictConfig, pde_param: str) -> None:
+        super().__init__(config, pde_param)
+
+        filepath = pde_param
+        if not filepath.endswith((".h5", ".hdf5")):
+            filepath = filepath + ".hdf5"
+        filepath = os.path.join(config.data.path, filepath)
+        self.h5_file_u = h5py.File(filepath, "r")
+        self.dataset_size = self.h5_file_u["sol/u"].shape[0]
+
+        t_coord = self.h5_file_u["coord/t"][1:]
+        x_coord = self.h5_file_u["coord/x"][()]
+        y_coord = self.h5_file_u["coord/y"][()]
+        self.epsilon = self.h5_file_u["coef/epsilon"][()]
+        self.rho = self.h5_file_u["coef/rho"][()]
+        self.coef_dict = {r"\epsilon": "sample-dependent",
+                          r"\rho": "sample-dependent"}
+
+        pde = self._gen_pde_nodes(x_coord, y_coord)
+        self.pde_dag = pde.gen_dag(config)
+        self.txyz_coord = self._gen_coords(t_coord, x_coord, y_coord)
+
+    def __getitem__(self, idx_pde: int) -> Tuple[NDArray[float]]:
+        u_label = np.expand_dims(self.h5_file_u["sol/u"][idx_pde, 1:], axis=-1)
+        u_label = np.expand_dims(u_label, axis=-2)
+
+        input_field = np.expand_dims(self.h5_file_u["coef/u_ic"][idx_pde], axis=-1)
+        input_scalar = np.array([
+            float(self.epsilon[idx_pde]),
+            float(self.rho[idx_pde]),
+        ])
+        return input_field, input_scalar, self.txyz_coord, u_label
+
+    def get_pde_info(self,
+                     idx_pde: int,
+                     idx_var: Optional[int] = None) -> Dict[str, Any]:
+        data_info = super().get_pde_info(idx_pde, idx_var)
+        data_info["coef_dict"] = {
+            r"\epsilon": float(self.epsilon[idx_pde]),
+            r"\rho": float(self.rho[idx_pde]),
+        }
+        return data_info
+
+    @staticmethod
+    def _gen_pde_nodes(x_coord: NDArray[float],
+                       y_coord: NDArray[float]) -> PDENodesCollector:
+        pde = PDENodesCollector(dim=2)
+        x_ext, y_ext = np.meshgrid(x_coord, y_coord, indexing="ij")
+
+        u_ = pde.new_uf()
+        pde.set_ic(u_, np.nan, x=x_ext, y=y_ext)
+        epsilon = pde.new_coef(np.nan)
+        rho = pde.new_coef(np.nan)
+
+        pde.sum_eq0(u_.dt,
+                    -(epsilon * (u_.dx.dx + u_.dy.dy)),
+                    -(rho * (u_ - u_ * u_ * u_)))
+        return pde
