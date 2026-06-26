@@ -1,0 +1,47 @@
+base_config: configs/pretrain/model-L_small-data.yaml
+
+model:
+  # Set this to a pretrained model-L PyTorch state dict for real finetuning.
+  # Use "none" for a from-scratch pipeline check.
+  load_ckpt: model-L.pt
+
+data:
+  path: data/viscoelastic2d
+  type: single_pde
+  num_workers: 0
+  num_samples_per_file:
+    train: 8
+    test: 8
+  pde_dag:
+    max_n_scalar_nodes: 192
+    max_n_function_nodes: 8
+    disconn_attn_bias: -inf
+  single_pde:
+    param_name: viscoelastic2d
+    regularize_ratio: 0.
+    train: [viscoelastic2d]
+
+train:
+  total_batch_size: 1
+  num_txyz_samp_pts: 2048
+  lr_init: 5.e-6
+  epochs: 20
+  lr_scheduler:
+    type: mstep
+    milestones: [10]
+    decay: 0.5
+    enable_warmup: False
+
+eval:
+  total_batch_size: 1
+  interval: 5
+  plot_num_per_type: 0
+  dataset_per_type: 1
+
+record_dir: exp/finetune/viscoelastic2d/model-L
+wandb:
+  enabled: true
+  project: pdeformer-2-finetuning
+  name: viscoelastic2d-model-L
+  tags: [finetune, viscoelastic2d, oldroyd-b, fene, model-L, pdeformer-2]
+  mode: online
