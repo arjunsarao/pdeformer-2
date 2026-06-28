@@ -20,3 +20,4 @@ kernel*
 .DS_Store
 *.hdf5
 slurm_logs/
+PolymathicAI the_well master datasets/

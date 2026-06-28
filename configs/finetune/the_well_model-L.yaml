@@ -1,0 +1,54 @@
+base_config: configs/pretrain/model-L_small-data.yaml
+
+model:
+  load_ckpt: model-L.pt
+
+data:
+  path: /path/to/the_well
+  type: single_pde
+  num_workers: 0
+  num_samples_per_file:
+    train: 8
+    test: 8
+  pde_dag:
+    max_n_scalar_nodes: 256
+    max_n_function_nodes: 8
+    disconn_attn_bias: -inf
+  single_pde:
+    param_name: the_well
+    regularize_ratio: 0.
+    train: [gray_scott_reaction_diffusion:train]
+    test: [gray_scott_reaction_diffusion:valid]
+    well:
+      normalization: zscore
+      n_steps_input: 1
+      n_steps_output: 1
+      dt_stride: 1
+      max_fields: 8
+      normalize_coordinates: true
+      normalize_time: true
+
+train:
+  total_batch_size: 1
+  num_txyz_samp_pts: 4096
+  lr_init: 5.e-6
+  epochs: 20
+  lr_scheduler:
+    type: mstep
+    milestones: [10]
+    decay: 0.5
+    enable_warmup: False
+
+eval:
+  total_batch_size: 1
+  interval: 5
+  plot_num_per_type: 0
+  dataset_per_type: 1
+
+record_dir: exp/finetune/the_well/gray_scott_reaction_diffusion/model-L
+wandb:
+  enabled: true
+  project: pdeformer-2-the-well-finetuning
+  name: the-well-gray_scott_reaction_diffusion-model-L
+  tags: [finetune, the_well, gray_scott_reaction_diffusion, model-L, pdeformer-2]
+  mode: online
