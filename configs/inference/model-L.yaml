@@ -40,6 +40,13 @@ model:
   load_ckpt: model-L.pt
   # You can download from https://ai.gitee.com/functoreality/PDEformer2-L/blob/master/model-L.ckpt
   # or data-download.obs.cn-northeast-227.dlaicc.com/checkpoints/release/pdeformer2-base.ckpt
+  compile:
+    enabled: False
+    mode: reduce-overhead
+    backend: inductor
+    fullgraph: False
+    dynamic: False
+    fallback_on_error: True
 data:
   pde_dag:
     max_n_scalar_nodes: 80

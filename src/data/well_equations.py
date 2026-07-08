@@ -2,7 +2,7 @@ r"""Dataset-specific PDEformer DAGs for Polymathic AI's The Well datasets."""
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Callable, Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Tuple
 
 import numpy as np
 from numpy.typing import NDArray
@@ -12,7 +12,7 @@ from .pde_dag import PDEAsDAG, PDENode, PDENodesCollector
 
 
 Array = NDArray[np.float32]
-Builder = Callable[[PDENodesCollector, List[PDENode], List[str]], None]
+Builder = Callable[[PDENodesCollector, List[PDENode], List[str], Dict[str, Any]], None]
 
 
 @dataclass(frozen=True)
@@ -125,12 +125,22 @@ def build_well_pde_dag(
         dataset_name: str,
         ic_fields: NDArray[np.floating],
         space_grid: Array,
-        channel_names: Sequence[str]) -> PDEAsDAG:
+        channel_names: Sequence[str],
+        equation_scalars: Optional[Dict[str, float]] = None,
+        coordinate_scales: Optional[Dict[str, float]] = None) -> PDEAsDAG:
     r"""Build a PDEformer DAG with numeric ICs for a Well sample."""
     resolution = int(config.model.function_encoder.get("resolution", 128))
     ic_on_fenc, x_ext, y_ext = interpolate_fields_to_resolution(
         ic_fields, space_grid, resolution)
-    pde = _build_pde(dataset_name, channel_names, x_ext, y_ext, ic_on_fenc)
+    pde = _build_pde(
+        dataset_name,
+        channel_names,
+        x_ext,
+        y_ext,
+        ic_on_fenc,
+        equation_scalars=equation_scalars,
+        coordinate_scales=coordinate_scales,
+    )
     return pde.gen_dag(config)
 
 
@@ -138,9 +148,17 @@ def build_well_pde_template(
         dataset_name: str,
         channel_names: Sequence[str],
         x_ext: Array,
-        y_ext: Array) -> PDENodesCollector:
+        y_ext: Array,
+        coordinate_scales: Optional[Dict[str, float]] = None) -> PDENodesCollector:
     r"""Build a PDE graph with NaN IC placeholders for a Well dataset."""
-    return _build_pde(dataset_name, channel_names, x_ext, y_ext, None)
+    return _build_pde(
+        dataset_name,
+        channel_names,
+        x_ext,
+        y_ext,
+        None,
+        coordinate_scales=coordinate_scales,
+    )
 
 
 def get_well_equation_spec(dataset_name: str) -> WellEquationSpec:
@@ -162,7 +180,9 @@ def _build_pde(
         channel_names: Sequence[str],
         x_ext: Array,
         y_ext: Array,
-        ic_fields: Optional[Array]) -> PDENodesCollector:
+        ic_fields: Optional[Array],
+        equation_scalars: Optional[Dict[str, float]] = None,
+        coordinate_scales: Optional[Dict[str, float]] = None) -> PDENodesCollector:
     spec = get_well_equation_spec(dataset_name)
     if spec.spatial_dims != 2:
         raise ValueError(
@@ -175,7 +195,11 @@ def _build_pde(
         ic_value = np.nan if ic_fields is None else ic_fields[..., idx]
         pde.set_ic(var, ic_value, x=x_ext, y=y_ext)
         variables.append(var)
-    spec.builder(pde, variables, [str(name) for name in channel_names])
+    context = {
+        "equation_scalars": equation_scalars or {},
+        "coordinate_scales": coordinate_scales or {},
+    }
+    spec.builder(pde, variables, [str(name) for name in channel_names], context)
     return pde
 
 
@@ -215,7 +239,7 @@ def _add_closure_eqs(
         pde.sum_eq0(var.dt, *known_terms.get(idx, []), closures[idx])
 
 
-def _acoustic(pde: PDENodesCollector, v: List[PDENode], names: List[str]) -> None:
+def _acoustic(pde: PDENodesCollector, v: List[PDENode], names: List[str], _context: Dict[str, Any]) -> None:
     p = _var(names, v, "pressure", "pressure_re")
     ux = _var(names, v, "velocity_x", "u")
     uy = _var(names, v, "velocity_y", "v")
@@ -229,23 +253,62 @@ def _acoustic(pde: PDENodesCollector, v: List[PDENode], names: List[str]) -> Non
     _add_closure_eqs(pde, v, 10.0)
 
 
-def _gray_scott(pde: PDENodesCollector, v: List[PDENode], names: List[str]) -> None:
+def _scaled_coef(pde: PDENodesCollector, value: float, scale: float) -> PDENode:
+    return pde.new_coef(float(value) * float(scale))
+
+
+def _sample_or_placeholder_coef(
+        pde: PDENodesCollector,
+        scalars: Dict[str, float],
+        name: str,
+        scale: float) -> PDENode:
+    if name in scalars:
+        return pde.new_coef(float(scalars[name]) * float(scale))
+    return pde.new_coef(np.nan)
+
+
+def _gray_scott(pde: PDENodesCollector, v: List[PDENode], names: List[str], context: Dict[str, Any]) -> None:
     a = _var(names, v, "A", "concentration_A")
     b = _var(names, v, "B", "concentration_B")
     if a is not None and b is not None:
-        d_a = pde.new_coef(2.0e-5)
-        d_b = pde.new_coef(1.0e-5)
-        feed = pde.new_coef(0.04)
-        kill = pde.new_coef(0.06)
+        scalars = context.get("equation_scalars", {})
+        scales = context.get("coordinate_scales", {})
+        time_scale = float(scales.get("time", 1.0))
+        x_scale = float(scales.get("x", 1.0))
+        y_scale = float(scales.get("y", 1.0))
+        if abs(x_scale) < 1.0e-12:
+            x_scale = 1.0
+        if abs(y_scale) < 1.0e-12:
+            y_scale = 1.0
+
+        d_a_x = _scaled_coef(pde, 2.0e-5, time_scale / (x_scale * x_scale))
+        d_a_y = _scaled_coef(pde, 2.0e-5, time_scale / (y_scale * y_scale))
+        d_b_x = _scaled_coef(pde, 1.0e-5, time_scale / (x_scale * x_scale))
+        d_b_y = _scaled_coef(pde, 1.0e-5, time_scale / (y_scale * y_scale))
+        feed = _sample_or_placeholder_coef(pde, scalars, "F", time_scale)
+        kill = _sample_or_placeholder_coef(pde, scalars, "k", time_scale)
+        reaction_scale = pde.new_coef(time_scale)
         one = pde.new_coef(1.0)
         ab2 = a * b * b
-        pde.sum_eq0(a.dt, -(d_a * _lap(a)), ab2, -(feed * (one - a)))
-        pde.sum_eq0(b.dt, -(d_b * _lap(b)), -ab2, (feed + kill) * b)
+        pde.sum_eq0(
+            a.dt,
+            -(d_a_x * a.dx.dx),
+            -(d_a_y * a.dy.dy),
+            reaction_scale * ab2,
+            -(feed * (one - a)),
+        )
+        pde.sum_eq0(
+            b.dt,
+            -(d_b_x * b.dx.dx),
+            -(d_b_y * b.dy.dy),
+            -(reaction_scale * ab2),
+            (feed + kill) * b,
+        )
         return
     _add_closure_eqs(pde, v, 20.0)
 
 
-def _navier_stokes_tracer(pde: PDENodesCollector, v: List[PDENode], names: List[str]) -> None:
+def _navier_stokes_tracer(pde: PDENodesCollector, v: List[PDENode], names: List[str], _context: Dict[str, Any]) -> None:
     tracer = _var(names, v, "tracer", "buoyancy", "concentration")
     pressure = _var(names, v, "pressure")
     ux = _var(names, v, "velocity_x", "momentum_x")
@@ -275,7 +338,7 @@ def _navier_stokes_tracer(pde: PDENodesCollector, v: List[PDENode], names: List[
     _add_closure_eqs(pde, v, 30.0, known)
 
 
-def _shallow_water(pde: PDENodesCollector, v: List[PDENode], names: List[str]) -> None:
+def _shallow_water(pde: PDENodesCollector, v: List[PDENode], names: List[str], _context: Dict[str, Any]) -> None:
     h = _var(names, v, "height")
     ux = _var(names, v, "velocity_theta", "velocity_x")
     uy = _var(names, v, "velocity_phi", "velocity_y")
@@ -289,7 +352,7 @@ def _shallow_water(pde: PDENodesCollector, v: List[PDENode], names: List[str]) -
     _add_closure_eqs(pde, v, 40.0)
 
 
-def _euler(pde: PDENodesCollector, v: List[PDENode], names: List[str]) -> None:
+def _euler(pde: PDENodesCollector, v: List[PDENode], names: List[str], _context: Dict[str, Any]) -> None:
     rho = _var(names, v, "density")
     e = _var(names, v, "energy")
     p = _var(names, v, "pressure")
@@ -313,7 +376,7 @@ def _euler(pde: PDENodesCollector, v: List[PDENode], names: List[str]) -> None:
     _add_closure_eqs(pde, v, 50.0, known)
 
 
-def _hydro_cooling(pde: PDENodesCollector, v: List[PDENode], names: List[str]) -> None:
+def _hydro_cooling(pde: PDENodesCollector, v: List[PDENode], names: List[str], _context: Dict[str, Any]) -> None:
     rho = _var(names, v, "density")
     p = _var(names, v, "pressure")
     temp = _var(names, v, "temperature")
@@ -330,14 +393,14 @@ def _hydro_cooling(pde: PDENodesCollector, v: List[PDENode], names: List[str]) -
     _add_closure_eqs(pde, v, 60.0, known)
 
 
-def _helmholtz(pde: PDENodesCollector, v: List[PDENode], _names: List[str]) -> None:
+def _helmholtz(pde: PDENodesCollector, v: List[PDENode], _names: List[str], _context: Dict[str, Any]) -> None:
     omega2 = pde.new_coef(1.0)
     for idx, u in enumerate(v):
         source = pde.unknown_func(u, pde.new_coef(float(idx)), squeeze=False)[0]
         pde.sum_eq0(-_lap(u), -(omega2 * u), source)
 
 
-def _viscoelastic(pde: PDENodesCollector, v: List[PDENode], names: List[str]) -> None:
+def _viscoelastic(pde: PDENodesCollector, v: List[PDENode], names: List[str], _context: Dict[str, Any]) -> None:
     pressure = _var(names, v, "pressure")
     ux = _var(names, v, "velocity_x")
     uy = _var(names, v, "velocity_y")
@@ -369,7 +432,7 @@ def _viscoelastic(pde: PDENodesCollector, v: List[PDENode], names: List[str]) ->
     _add_closure_eqs(pde, v, 70.0, known)
 
 
-def _active_matter(pde: PDENodesCollector, v: List[PDENode], names: List[str]) -> None:
+def _active_matter(pde: PDENodesCollector, v: List[PDENode], names: List[str], _context: Dict[str, Any]) -> None:
     concentration = _var(names, v, "concentration")
     ux = _var(names, v, "velocity_x")
     uy = _var(names, v, "velocity_y")
@@ -384,7 +447,7 @@ def _active_matter(pde: PDENodesCollector, v: List[PDENode], names: List[str]) -
     _add_closure_eqs(pde, v, 80.0, known)
 
 
-def _generic_closure(pde: PDENodesCollector, v: List[PDENode], _names: List[str]) -> None:
+def _generic_closure(pde: PDENodesCollector, v: List[PDENode], _names: List[str], _context: Dict[str, Any]) -> None:
     _add_closure_eqs(pde, v, 90.0)
 
 

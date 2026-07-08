@@ -2,10 +2,13 @@ r"""Train the model."""
 import time
 import argparse
 import math
+import random
+from contextlib import contextmanager
 from typing import Dict, Any
 
 import numpy as np
 import torch
+from omegaconf import OmegaConf
 from src.torch_compat import dtype as mstype
 from src.torch_compat import Tensor, context
 from src.torch_compat import DynamicLossScaler, auto_mixed_precision
@@ -16,6 +19,30 @@ from src.core import (calculate_l2_error, L2ErrorRecord, EvalErrorRecord,
 from src.utils import load_config, init_record, set_seed
 from src.utils.visual import video_2d
 from src.cell import get_model
+
+
+@contextmanager
+def preserve_rng_state(enabled: bool = True):
+    r"""Preserve Python, NumPy, and PyTorch RNG state around a block."""
+    if not enabled:
+        yield
+        return
+
+    py_state = random.getstate()
+    np_state = np.random.get_state()
+    torch_state = torch.random.get_rng_state()
+    cuda_states = None
+    if torch.cuda.is_available():
+        cuda_states = torch.cuda.get_rng_state_all()
+
+    try:
+        yield
+    finally:
+        random.setstate(py_state)
+        np.random.set_state(np_state)
+        torch.random.set_rng_state(torch_state)
+        if cuda_states is not None:
+            torch.cuda.set_rng_state_all(cuda_states)
 
 
 def parse_args():
@@ -38,6 +65,18 @@ def parse_args():
                         help="Disable distributed training (data parallel).")
     parser.add_argument("--config_file_path", "-c", type=str, required=True,
                         help="Path of the configuration YAML file.")
+    parser.add_argument("--torch_compile", action="store_true",
+                        help="Compile model.forward with torch.compile.")
+    parser.add_argument("--torch_compile_mode", type=str, default=None,
+                        help="Optional torch.compile mode, e.g. reduce-overhead or max-autotune.")
+    parser.add_argument("--torch_compile_backend", type=str, default=None,
+                        help="Optional torch.compile backend, e.g. inductor.")
+    parser.add_argument("--torch_compile_fullgraph", action="store_true",
+                        help="Pass fullgraph=True to torch.compile.")
+    parser.add_argument("--torch_compile_dynamic", action="store_true",
+                        help="Pass dynamic=True to torch.compile.")
+    parser.add_argument("--seed", type=int, default=None,
+                        help="Override config seed for reproducible runs.")
 
     input_args = parser.parse_args()
     input_args.distributed = False
@@ -277,8 +316,10 @@ def eval_dataset_dict(epoch, dataset_dict, prefix="train"):
 
 def eval_model(epoch):
     r"""Evaluate the model with both train data and test data."""
-    eval_dataset_dict(epoch, train_iter_dict, prefix="train")
-    eval_error_test, l2_error_test = eval_dataset_dict(epoch, test_iter_dict, prefix="test")
+    preserve_rng = config.eval.get("preserve_rng_state", True)
+    with preserve_rng_state(preserve_rng):
+        eval_dataset_dict(epoch, train_iter_dict, prefix="train")
+        eval_error_test, l2_error_test = eval_dataset_dict(epoch, test_iter_dict, prefix="test")
 
     return eval_error_test, l2_error_test
 
@@ -294,6 +335,20 @@ def train():
     eval_error_test, l2_error_test = eval_model(epoch=0)
     eval_error_best = eval_error_test["eval_error_mean"]
     l2_error_best = l2_error_test["l2_error_mean"]
+    best_metric_name = config.train.get("best_metric", "eval_error_mean")
+    if best_metric_name == "eval_error_mean":
+        best_metric = eval_error_best
+    elif best_metric_name == "l2_error_mean":
+        best_metric = l2_error_best
+    else:
+        raise ValueError(
+            "train.best_metric must be one of ['eval_error_mean', "
+            f"'l2_error_mean'], but got {best_metric_name!r}")
+    best_epoch = 0
+    record.save_ckpt(model, "model_best.ckpt")
+    record.print(
+        f"Epoch 0: model_best.ckpt initialized from "
+        f"{best_metric_name} {best_metric:>7f}")
     if config.train.epochs <= 0:
         record.print(f"eval_error_mean: {eval_error_best:>7f}")
         return
@@ -383,17 +438,29 @@ def train():
 
             if l2_error_best > l2_error_test["l2_error_mean"]:
                 l2_error_best = l2_error_test["l2_error_mean"]
+
+            if best_metric_name == "eval_error_mean":
+                metric_value = eval_error_test["eval_error_mean"]
+            else:
+                metric_value = l2_error_test["l2_error_mean"]
+
+            if best_metric > metric_value:
+                best_metric = metric_value
+                best_epoch = epoch
                 record.save_ckpt(model, "model_best.ckpt")
+                record.print(
+                    f"Epoch {epoch}: saved model_best.ckpt with "
+                    f"{best_metric_name} {best_metric:>7f}")
 
     record.print(f"best eval_error_mean: {eval_error_best:>7f}")
     record.print(f"best l2_error_mean: {l2_error_best:>7f}")
+    record.print(
+        f"best checkpoint: epoch {best_epoch}, "
+        f"{best_metric_name}: {best_metric:>7f}")
     record.print("training done!")
 
 
 if __name__ == "__main__":
-    # seed
-    set_seed(123456)
-
     # args
     args = parse_args()
 
@@ -416,9 +483,25 @@ if __name__ == "__main__":
 
     # load config file
     config = load_config(args.config_file_path)
+    seed = args.seed if args.seed is not None else config.get("seed", 123456)
+    OmegaConf.update(config, "seed", int(seed), merge=True)
+    if args.torch_compile:
+        OmegaConf.update(config, "model.compile.enabled", True, merge=True)
+    if args.torch_compile_mode is not None:
+        OmegaConf.update(config, "model.compile.mode", args.torch_compile_mode, merge=True)
+    if args.torch_compile_backend is not None:
+        OmegaConf.update(config, "model.compile.backend", args.torch_compile_backend, merge=True)
+    if args.torch_compile_fullgraph:
+        OmegaConf.update(config, "model.compile.fullgraph", True, merge=True)
+    if args.torch_compile_dynamic:
+        OmegaConf.update(config, "model.compile.dynamic", True, merge=True)
+
+    # seed before dataset/model construction so sampling and initialization are reproducible
+    set_seed(int(config.seed))
 
     # init record
     record = init_record(rank_id, args, config)
+    record.print(f"seed: {int(config.seed)}")
 
     # dataset; note that this may change model config options for single_pde
     # data by automatically calling 'dataset.add_model_config_(...)'

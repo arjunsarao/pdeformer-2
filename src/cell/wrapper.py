@@ -6,6 +6,7 @@ from omegaconf import DictConfig
 import src.torch_compat as ms
 from src.torch_compat import nn, context
 from src.torch_compat import dtype as mstype
+from src.torch_compat import compile_module_forward
 
 from .pdeformer import PDEformer
 from .baseline import DeepONet, FNO, UNet2D, CNNDeepONet
@@ -130,5 +131,9 @@ def get_model(config: DictConfig,
         record.print(f"model_type: {config.model_type}, num_parameters: "
                      + calculate_num_params(model))
         # record.print("model architecture:\n" + str(model))
+
+    model = compile_module_forward(
+        model, config.model.get("compile", None),
+        log_fn=record.print if record is not None else None)
 
     return model

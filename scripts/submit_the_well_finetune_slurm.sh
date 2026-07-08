@@ -28,10 +28,15 @@ N_STEPS_INPUT="${N_STEPS_INPUT:-1}"
 N_STEPS_OUTPUT="${N_STEPS_OUTPUT:-1}"
 DT_STRIDE="${DT_STRIDE:-1}"
 WELL_NORMALIZATION="${WELL_NORMALIZATION:-zscore}"
+NORMALIZE_COORDINATES="${NORMALIZE_COORDINATES:-true}"
+NORMALIZE_TIME="${NORMALIZE_TIME:-true}"
 EPOCHS="${EPOCHS:-20}"
 NUM_TXYZ_SAMP_PTS="${NUM_TXYZ_SAMP_PTS:-4096}"
 LR_INIT="${LR_INIT:-5.e-6}"
+SEED="${SEED:-123456}"
+BEST_METRIC="${BEST_METRIC:-eval_error_mean}"
 EVAL_INTERVAL="${EVAL_INTERVAL:-5}"
+PRESERVE_EVAL_RNG_STATE="${PRESERVE_EVAL_RNG_STATE:-true}"
 DEVICE_TARGET="${DEVICE_TARGET:-GPU}"
 DEVICE_ID="${DEVICE_ID:-0}"
 MODE="${MODE:-PYNATIVE}"
@@ -53,7 +58,8 @@ CONFIG_PATH="${CONFIG_PATH:-slurm_logs/the_well_finetune_${WELL_DATASET}_${SLURM
 
 export BASE_CONFIG WELL_BASE_PATH WELL_DATASET TRAIN_SPLIT TEST_SPLIT CHECKPOINT
 export TRAIN_SAMPLES TEST_SAMPLES MAX_FIELDS FIELD_INDICES N_STEPS_INPUT N_STEPS_OUTPUT
-export DT_STRIDE WELL_NORMALIZATION EPOCHS NUM_TXYZ_SAMP_PTS LR_INIT EVAL_INTERVAL
+export DT_STRIDE WELL_NORMALIZATION NORMALIZE_COORDINATES NORMALIZE_TIME
+export EPOCHS NUM_TXYZ_SAMP_PTS LR_INIT SEED BEST_METRIC EVAL_INTERVAL PRESERVE_EVAL_RNG_STATE
 export RECORD_DIR WANDB_MODE CONFIG_PATH
 
 ${PYTHON_CMD} - <<'PY'
@@ -61,11 +67,20 @@ import os
 from pathlib import Path
 
 field_indices = os.environ.get("FIELD_INDICES", "").strip()
+if os.environ["WELL_DATASET"] == "gray_scott_reaction_diffusion":
+    if not field_indices:
+        field_indices = "0,1"
+    elif field_indices == "0" and int(os.environ["MAX_FIELDS"]) >= 2:
+        print(
+            "Warning: Gray-Scott received FIELD_INDICES=0; using 0,1. "
+            "Quote Slurm exports like FIELD_INDICES='0,1'.")
+        field_indices = "0,1"
 field_yaml = "null"
 if field_indices:
     field_yaml = "[" + ", ".join(part.strip() for part in field_indices.split(",")) + "]"
 
 text = f"""base_config: {os.environ["BASE_CONFIG"]}
+seed: {os.environ["SEED"]}
 
 model:
   load_ckpt: {os.environ["CHECKPOINT"]}
@@ -93,18 +108,20 @@ data:
       dt_stride: {os.environ["DT_STRIDE"]}
       max_fields: {os.environ["MAX_FIELDS"]}
       field_indices: {field_yaml}
-      normalize_coordinates: true
-      normalize_time: true
+      normalize_coordinates: {os.environ["NORMALIZE_COORDINATES"]}
+      normalize_time: {os.environ["NORMALIZE_TIME"]}
 
 train:
   total_batch_size: 1
   num_txyz_samp_pts: {os.environ["NUM_TXYZ_SAMP_PTS"]}
   lr_init: {os.environ["LR_INIT"]}
   epochs: {os.environ["EPOCHS"]}
+  best_metric: {os.environ["BEST_METRIC"]}
 
 eval:
   total_batch_size: 1
   interval: {os.environ["EVAL_INTERVAL"]}
+  preserve_rng_state: {os.environ["PRESERVE_EVAL_RNG_STATE"]}
   plot_num_per_type: 0
   dataset_per_type: 1
 
@@ -130,6 +147,11 @@ echo "train_split: ${TRAIN_SPLIT}"
 echo "test_split: ${TEST_SPLIT}"
 echo "field_indices: ${FIELD_INDICES}"
 echo "max_fields: ${MAX_FIELDS}"
+echo "normalize_coordinates: ${NORMALIZE_COORDINATES}"
+echo "normalize_time: ${NORMALIZE_TIME}"
+echo "seed: ${SEED}"
+echo "best_metric: ${BEST_METRIC}"
+echo "preserve_eval_rng_state: ${PRESERVE_EVAL_RNG_STATE}"
 echo "config_path: ${CONFIG_PATH}"
 echo "record_dir: ${RECORD_DIR}"
 echo "device_target: ${DEVICE_TARGET}"

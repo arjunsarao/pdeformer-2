@@ -30,6 +30,13 @@ if str(REPO_ROOT) not in sys.path:
 
 from src.cell import get_model
 from src.data.pde_dag import PDEAsDAG, PDENodesCollector
+from src.data.single_pde.dataset_well import (
+    _constant_scalar_dict,
+    _coordinate_scales,
+    _infer_channel_count,
+    _last_input_frame_channel_last,
+    _select_channels_channel_last,
+)
 from src.data.well_equations import build_well_pde_dag
 from src.torch_compat import Tensor, context
 from src.torch_compat import dtype as mstype
@@ -367,11 +374,13 @@ def predict_channel(
     return pred_flat.reshape(coordinate.shape[:-1])
 
 
-def choose_channels(sample: Dict[str, torch.Tensor],
+def choose_channels(output_fields: Array,
+                    spatial_shape: Tuple[int, ...],
                     field_indices: Optional[List[int]],
                     max_fields: int,
                     max_function_nodes: int) -> List[int]:
-    n_channels = int(sample["output_fields"].shape[-1])
+    n_channels = _infer_channel_count(
+        output_fields, spatial_shape, "output_fields")
     if field_indices is None:
         n_auto = min(n_channels, max_fields, max_function_nodes)
         return list(range(n_auto))
@@ -448,30 +457,49 @@ def evaluate(args: argparse.Namespace) -> Dict[str, object]:
         sample = dataset[sample_idx]
         input_fields = as_numpy(sample["input_fields"])
         output_fields = as_numpy(sample["output_fields"])
-        space_grid = normalize_space_grid(as_numpy(sample["space_grid"]),
+        raw_space_grid = as_numpy(sample["space_grid"])
+        raw_output_time_grid = as_numpy(sample["output_time_grid"])
+        coordinate_scales = _coordinate_scales(
+            raw_space_grid,
+            raw_output_time_grid,
+            args.normalize_coordinates,
+            args.normalize_time,
+        )
+        space_grid = normalize_space_grid(raw_space_grid,
                                           args.normalize_coordinates)
-        output_time_grid = normalize_time_grid(as_numpy(sample["output_time_grid"]),
+        spatial_shape = tuple(space_grid.shape[:-1])
+        output_time_grid = normalize_time_grid(raw_output_time_grid,
                                                args.normalize_time)
         coordinate = coordinate_array(space_grid, output_time_grid)
 
         if selected_channels is None:
             selected_channels = choose_channels(
-                sample,
+                output_fields,
+                spatial_shape,
                 parse_int_list(args.field_indices),
                 args.max_fields,
                 int(config.data.pde_dag.max_n_function_nodes),
             )
 
-        ic_frame = input_fields[-1]
+        ic_frame = _last_input_frame_channel_last(
+            input_fields, tuple(selected_channels), spatial_shape)
+        output_selected = _select_channels_channel_last(
+            output_fields, tuple(selected_channels), spatial_shape, "output_fields")
         pde_dag = None
         selected_names = [channel_names[channel] for channel in selected_channels]
         if args.pde_preset == "well_equation":
+            scalar_dict = _constant_scalar_dict(
+                dataset.metadata,
+                sample.get("constant_scalars", ()),
+            )
             pde_dag = build_well_pde_dag(
                 config,
                 dataset.metadata.dataset_name,
-                ic_frame[..., selected_channels],
+                ic_frame,
                 space_grid,
                 selected_names,
+                equation_scalars=scalar_dict,
+                coordinate_scales=coordinate_scales,
             )
         pred_channels = []
         target_channels = []
@@ -479,7 +507,7 @@ def evaluate(args: argparse.Namespace) -> Dict[str, object]:
             if args.pde_preset != "well_equation":
                 pde_dag = build_channel_dag(
                     config,
-                    ic_frame[..., channel],
+                    ic_frame[..., local_idx],
                     space_grid,
                     channel,
                     args.pde_preset,
@@ -492,7 +520,7 @@ def evaluate(args: argparse.Namespace) -> Dict[str, object]:
                 device,
                 idx_var=local_idx if args.pde_preset == "well_equation" else 0,
             )
-            target = output_fields[..., channel]
+            target = output_selected[..., local_idx]
             pred_raw = denormalize_selected_channels(
                 pred[..., np.newaxis], norm, [channel])[..., 0]
             target_raw = denormalize_selected_channels(

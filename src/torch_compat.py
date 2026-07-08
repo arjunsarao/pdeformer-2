@@ -746,6 +746,9 @@ def set_seed(seed: int):
     torch.manual_seed(seed)
     if torch.cuda.is_available():
         torch.cuda.manual_seed_all(seed)
+    if hasattr(torch.backends, "cudnn"):
+        torch.backends.cudnn.benchmark = False
+        torch.backends.cudnn.deterministic = True
 
 
 def jit(fn=None, **_):
@@ -766,6 +769,67 @@ class DynamicLossScaler:
 
 
 def auto_mixed_precision(model, *_args, **_kwargs):
+    return model
+
+
+def _config_get(config, key: str, default=None):
+    if config is None:
+        return default
+    getter = getattr(config, "get", None)
+    if getter is not None:
+        return getter(key, default)
+    return getattr(config, key, default)
+
+
+def compile_module_forward(model: torch_nn.Module,
+                           compile_config=None,
+                           log_fn=None) -> torch_nn.Module:
+    r"""Compile a module's forward pass with ``torch.compile`` when enabled.
+
+    The model object itself is kept unchanged so callers can still access
+    submodules, optimizer parameter groups, and checkpoint state dicts normally.
+    """
+    if isinstance(compile_config, bool):
+        enabled = compile_config
+    else:
+        enabled = bool(_config_get(compile_config, "enabled", False))
+    if not enabled:
+        return model
+
+    torch_compile = getattr(torch, "compile", None)
+    if torch_compile is None:
+        message = "torch.compile requested, but this PyTorch build does not provide it."
+        if log_fn is not None:
+            log_fn(message)
+        else:
+            print(message)
+        return model
+
+    if getattr(model, "_torch_compile_enabled", False):
+        return model
+
+    compile_kwargs = {}
+    for key in ("backend", "mode", "fullgraph", "dynamic"):
+        value = _config_get(compile_config, key, None)
+        if value is not None:
+            compile_kwargs[key] = value
+
+    fallback_on_error = bool(_config_get(compile_config, "fallback_on_error", True))
+    try:
+        model.forward = torch_compile(model.forward, **compile_kwargs)
+    except Exception:
+        if not fallback_on_error:
+            raise
+        message = "torch.compile failed during setup; continuing with eager forward."
+        if log_fn is not None:
+            log_fn(message)
+        else:
+            print(message)
+        return model
+
+    model._torch_compile_enabled = True
+    if log_fn is not None:
+        log_fn(f"Enabled torch.compile for model.forward with options: {compile_kwargs}")
     return model
 
 

@@ -80,6 +80,13 @@ model:
     lora_rank: 8
     lora_alpha: 16
   load_ckpt: none  # or path/to/your/model-size.pt
+  compile:
+    enabled: False  # True enables torch.compile(model.forward)
+    mode: reduce-overhead  # optional: {default, reduce-overhead, max-autotune}
+    backend: inductor  # optional; remove to use the PyTorch default
+    fullgraph: False
+    dynamic: False
+    fallback_on_error: True
 data:
   path: ../data_download  # or any path/to/your/data_download
   type: multi_pde  # {single_pde, multi_pde}
