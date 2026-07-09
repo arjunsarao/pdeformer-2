@@ -9,6 +9,7 @@ from src.torch_compat import BatchDataset
 from src.torch_compat import get_rank
 
 from ..utils_dataload import datasets2loader
+from ..path_utils import use_local_dataset_path
 from . import pde_types
 from .datasets import get_pde_dataset_cls, MultiPDEDatasetBase
 
@@ -86,6 +87,8 @@ def static_multi_pde_dataset(config: DictConfig) -> Tuple:
         test_loader_dict (Dict[str, Dict[str, Tuple]]): Similar to
             `train_loader_dict`, but for the testing dataset.
     """
+    use_local_dataset_path(config)
+
     num_samples_train = config.data.num_samples_per_file.train
     num_samples_test = config.data.num_samples_per_file.test
     train_file_dict = config.data.multi_pde.train
@@ -327,6 +330,8 @@ def dynamic_multi_pde_dataset(config: DictConfig) -> Tuple:
         test_loader_dict (Dict[str, Dict[str, Tuple]]): Similar to
             `train_loader_dict`, but for the testing dataset.
     """
+    use_local_dataset_path(config)
+
     # dict of train/test data file
     num_samples_train = config.data.num_samples_per_file.train
     num_samples_test = config.data.num_samples_per_file.test

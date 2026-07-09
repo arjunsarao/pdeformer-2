@@ -16,6 +16,15 @@ from src.torch_compat import SummaryRecord, Tensor, save_checkpoint, nn
 from .visual import plot_l2_error_and_epochs
 
 
+DEFAULT_WANDB_LOG_KEYS = {
+    "train/loss",
+    "train_all_all/eval_error_mean",
+    "train_all_all/l2_error_mean",
+    "test_all_all/eval_error_mean",
+    "test_all_all/l2_error_mean",
+}
+
+
 def create_logger(path: str = "./log.log") -> logging.Logger:
     r"""
     Create a logger to save the experimental results.
@@ -80,6 +89,8 @@ class Record:
         self.enable_record = enable_record
         self.enable_wandb = False
         self.wandb_run = None
+        self.wandb_log_all_metrics = False
+        self.wandb_log_keys = set(DEFAULT_WANDB_LOG_KEYS)
         self.record_dir = os.path.join(root_dir, time.strftime('%Y-%m-%d-%H-%M-%S'))
         self.ckpt_dir = os.path.join(self.record_dir, 'ckpt')
         self.pkl_dir = os.path.join(self.record_dir, 'pkl')
@@ -133,6 +144,11 @@ class Record:
             }
             self.wandb_run = wandb.init(**wandb_init_kwargs)
             self.enable_wandb = True
+            self.wandb_log_all_metrics = bool(
+                wandb_config.get("log_all_metrics", False))
+            configured_log_keys = wandb_config.get("log_keys", None)
+            if configured_log_keys is not None:
+                self.wandb_log_keys = set(configured_log_keys)
             self.wandb_run.summary["record_dir"] = self.record_dir
 
         # Mindinsight SummaryRecord
@@ -163,7 +179,7 @@ class Record:
     def add_scalar(self, tag: str, value: float, step: int) -> None:
         r"""Record the change of 'tag' with step."""
         if self.enable_record:
-            if self.enable_wandb:
+            if self.enable_wandb and self._should_log_to_wandb(tag):
                 self.wandb_run.log({tag: value}, step=step)
 
             if self.enable_summary:
@@ -182,8 +198,10 @@ class Record:
                 log_dict = {}
                 for key, value in dic.items():
                     tag = key if prefix == "" else f"{prefix}/{key}"
-                    log_dict[tag] = value
-                self.wandb_run.log(log_dict, step=step)
+                    if self._should_log_to_wandb(tag):
+                        log_dict[tag] = value
+                if log_dict:
+                    self.wandb_run.log(log_dict, step=step)
 
             if self.enable_summary:
                 for key, value in dic.items():
@@ -282,6 +300,10 @@ class Record:
             self.dic[key].append(value)
         else:
             self.dic[key] = [value]
+
+    def _should_log_to_wandb(self, tag: str) -> bool:
+        r"""Return whether a scalar should be sent to Weights & Biases."""
+        return self.wandb_log_all_metrics or tag in self.wandb_log_keys
 
 
 def init_record(rank_id: int,

@@ -3,6 +3,7 @@ model:  # PDEformer-2-fast
   inr:
     dim_hidden: 256
 data:
+  local_scratch: /local_scratch/pdeformer-2/data_download
   multi_pde:
     # Data can be downloaded using: https://github.com/functoreality/pdefoundry-2/blob/main/download/pdefoundry2_train.sh
     train:

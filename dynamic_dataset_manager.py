@@ -32,6 +32,7 @@ from typing import Dict, List
 from omegaconf import DictConfig
 
 from src.utils import load_config
+from src.data.path_utils import local_dataset_path, use_local_dataset_path
 from src.data.multi_pde.pde_types import (
     get_pde_info_cls, gen_file_list, DYN_DSET_COMM_DIR,
     DAG_INFO_DIR, FileListType)
@@ -133,7 +134,8 @@ class OBSDataFileManager(DataFileManagerBase):
     def _prepare_data_file(pde_type: str,
                            filename: str,
                            config: DictConfig) -> None:
-        file_path = os.path.join(config.data.path, filename + ".hdf5")
+        file_path = os.path.join(local_dataset_path(config.data),
+                                 filename + ".hdf5")
 
         # Download from OBS
         obs_path_dict = config.data.dynamic.obs_path
@@ -153,7 +155,7 @@ class OBSDataFileManager(DataFileManagerBase):
                           filename: str,
                           config: DictConfig) -> None:
         suffix = pde_info_cls.dag_file_suffix(config)
-        file_path = os.path.join(config.data.path, DAG_INFO_DIR,
+        file_path = os.path.join(local_dataset_path(config.data), DAG_INFO_DIR,
                                  filename + suffix)
 
         # check OBS file
@@ -503,11 +505,13 @@ def main() -> None:
 
     # static (non-dynamic) case
     if not config.data.dynamic.enabled:
+        use_local_dataset_path(config)
         preprocess_single_pde(config, logging.info)
         prepare_static_dataset(config)
         return
 
     # initialize
+    use_local_dataset_path(config)
     mapping_mgr = OverallMappingManager(config.data)
     mapping_mgr.init_mapping(config)
     waiter = WaitTimeManager(config.data.dynamic.wait_time)

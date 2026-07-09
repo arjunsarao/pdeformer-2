@@ -260,3 +260,7 @@ wandb:
   group: null
   tags: []
   mode: online  # online, offline, or disabled
+  log_all_metrics: False  # set True to restore the full local metric table in wandb
+  # By default wandb tracks only train/loss plus train/test all_all
+  # eval_error_mean and l2_error_mean. Set log_keys to override that allowlist.
+  log_keys: null
