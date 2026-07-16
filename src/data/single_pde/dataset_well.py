@@ -13,6 +13,7 @@ from ..env import float_dtype
 from ..well_equations import (
     build_well_pde_template,
     coordinate_array,
+    forecast_time_grid,
     get_well_equation_spec,
     interpolate_fields_to_resolution,
     normalize_space_grid,
@@ -160,6 +161,89 @@ def _constant_scalar_dict(metadata, values: Any) -> Dict[str, float]:
     }
 
 
+def _field_affine_from_normalizer(norm, field_names: Sequence[str],
+                                  channel_indices: Sequence[int]
+                                  ) -> Dict[str, Tuple[float, float]]:
+    r"""Return physical = mean + scale * normalized for selected fields."""
+    if norm is None:
+        return {name: (0.0, 1.0) for name in field_names}
+    if hasattr(norm, "flattened_means") and hasattr(norm, "flattened_stds"):
+        means = _as_numpy(norm.flattened_means["variable"]).reshape(-1)
+        scales = _as_numpy(norm.flattened_stds["variable"]).reshape(-1)
+    elif hasattr(norm, "flattened_rmss"):
+        means = np.zeros(len(norm.flattened_rmss["variable"]), dtype=np.float32)
+        scales = _as_numpy(norm.flattened_rmss["variable"]).reshape(-1)
+    else:
+        raise TypeError(f"Unsupported Well normalizer type: {type(norm)!r}")
+    return {
+        name: (float(means[idx]), float(scales[idx]))
+        for name, idx in zip(field_names, channel_indices)
+    }
+
+
+def _delta_affine_from_normalizer(norm, field_names: Sequence[str],
+                                  channel_indices: Sequence[int]
+                                  ) -> Dict[str, Tuple[float, float]]:
+    r"""Return physical delta = mean + scale * normalized delta."""
+    if norm is None:
+        return {name: (0.0, 1.0) for name in field_names}
+    if (hasattr(norm, "flattened_means_delta")
+            and hasattr(norm, "flattened_stds_delta")):
+        means = _as_numpy(norm.flattened_means_delta["variable"]).reshape(-1)
+        scales = _as_numpy(norm.flattened_stds_delta["variable"]).reshape(-1)
+    elif hasattr(norm, "flattened_rmss_delta"):
+        scales = _as_numpy(norm.flattened_rmss_delta["variable"]).reshape(-1)
+        means = np.zeros_like(scales)
+    else:
+        raise TypeError(
+            "The selected Well normalizer does not provide delta statistics: "
+            f"{type(norm)!r}")
+    return {
+        name: (float(means[idx]), float(scales[idx]))
+        for name, idx in zip(field_names, channel_indices)
+    }
+
+
+def _affine_vectors(affine: Dict[str, Tuple[float, float]],
+                    field_names: Sequence[str]
+                    ) -> Tuple[NDArray[np.float32], NDArray[np.float32]]:
+    means = np.asarray([affine[name][0] for name in field_names], dtype=np.float32)
+    scales = np.asarray([affine[name][1] for name in field_names], dtype=np.float32)
+    if np.any(~np.isfinite(scales)) or np.any(np.abs(scales) < 1.0e-12):
+        raise ValueError(f"Invalid normalization scales for fields {tuple(field_names)}")
+    return means, scales
+
+
+def _normalized_residual_target(
+        input_frame: NDArray[np.float32],
+        output_fields: NDArray[np.float32],
+        field_affine: Dict[str, Tuple[float, float]],
+        delta_affine: Dict[str, Tuple[float, float]],
+        field_names: Sequence[str]) -> NDArray[np.float32]:
+    r"""Convert normalized absolute states to normalized physical deltas."""
+    _, field_scales = _affine_vectors(field_affine, field_names)
+    delta_means, delta_scales = _affine_vectors(delta_affine, field_names)
+    while input_frame.ndim < output_fields.ndim:
+        input_frame = np.expand_dims(input_frame, axis=0)
+    physical_delta = (output_fields - input_frame) * field_scales
+    return ((physical_delta - delta_means) / delta_scales).astype(np.float32)
+
+
+def _normalized_absolute_from_residual(
+        input_frame: NDArray[np.float32],
+        residual: NDArray[np.float32],
+        field_affine: Dict[str, Tuple[float, float]],
+        delta_affine: Dict[str, Tuple[float, float]],
+        field_names: Sequence[str]) -> NDArray[np.float32]:
+    r"""Reconstruct normalized absolute states from normalized deltas."""
+    _, field_scales = _affine_vectors(field_affine, field_names)
+    delta_means, delta_scales = _affine_vectors(delta_affine, field_names)
+    while input_frame.ndim < residual.ndim:
+        input_frame = np.expand_dims(input_frame, axis=0)
+    physical_delta = residual * delta_scales + delta_means
+    return (input_frame + physical_delta / field_scales).astype(np.float32)
+
+
 def _selected_equation_scalar_values(
         dataset_name: str,
         scalar_dict: Dict[str, float],
@@ -171,6 +255,16 @@ def _selected_equation_scalar_values(
             dtype=float_dtype,
         )
     return np.empty(0, dtype=float_dtype)
+
+
+def _coprime_stride(size: int) -> int:
+    r"""Choose a deterministic stride that spreads short prefixes uniformly."""
+    if size <= 1:
+        return 1
+    stride = max(1, int(size * 0.6180339887498949))
+    while np.gcd(stride, size) != 1:
+        stride -= 1
+    return stride
 
 
 @register_pde_type("the_well", "well", "the-well")
@@ -230,10 +324,25 @@ class TheWellInputDataset(CartesianGridInputFileDataset):
 
         first_sample = self.dataset[0]
         self.dataset_size = len(self.dataset)
+        self.sample_indexing = str(well_cfg.get("sample_indexing", "uniform")).lower()
+        if self.sample_indexing not in {"uniform", "sequential"}:
+            raise ValueError(
+                "data.single_pde.well.sample_indexing must be 'uniform' or "
+                f"'sequential', got {self.sample_indexing!r}.")
+        self._sample_stride = _coprime_stride(self.dataset_size)
+        self._sample_offset = int(config.get("seed", 0)) % self.dataset_size
+        self.target_mode = str(well_cfg.get("target_mode", "absolute")).lower()
+        if self.target_mode not in {"absolute", "residual"}:
+            raise ValueError(
+                "data.single_pde.well.target_mode must be 'absolute' or "
+                f"'residual', got {self.target_mode!r}.")
         self.normalize_coordinates = bool(well_cfg.get("normalize_coordinates", True))
         self.normalize_time = bool(well_cfg.get("normalize_time", True))
         raw_space_grid = _as_numpy(first_sample["space_grid"])
-        raw_output_time_grid = _as_numpy(first_sample["output_time_grid"])
+        raw_output_time_grid = forecast_time_grid(
+            _as_numpy(first_sample["input_time_grid"]),
+            _as_numpy(first_sample["output_time_grid"]),
+        )
         self.coordinate_scales = _coordinate_scales(
             raw_space_grid,
             raw_output_time_grid,
@@ -279,6 +388,18 @@ class TheWellInputDataset(CartesianGridInputFileDataset):
                     "FIELD_INDICES when MAX_FIELDS>=2.")
         self.n_vars = len(self.selected_channels)
         self.var_latex = self.field_names
+        self.field_affine = _field_affine_from_normalizer(
+            getattr(self.dataset, "norm", None),
+            self.field_names,
+            self.selected_channels,
+        )
+        self.delta_affine = {}
+        if self.target_mode == "residual":
+            self.delta_affine = _delta_affine_from_normalizer(
+                getattr(self.dataset, "norm", None),
+                self.field_names,
+                self.selected_channels,
+            )
         output_time_grid = normalize_time_grid(raw_output_time_grid, self.normalize_time)
         self.txyz_coord = _coordinate_with_z_axis(space_grid, output_time_grid)
 
@@ -292,30 +413,60 @@ class TheWellInputDataset(CartesianGridInputFileDataset):
             x_ext,
             y_ext,
             coordinate_scales=self.coordinate_scales,
+            field_affine=self.field_affine,
         )
         self.pde_dag = pde.gen_dag(config)
         self._space_grid = space_grid
 
+    def _sample_index(self, idx_pde: int) -> int:
+        idx_pde = int(idx_pde)
+        if self.sample_indexing == "uniform":
+            return (self._sample_offset + idx_pde * self._sample_stride) \
+                % self.dataset_size
+        return idx_pde
+
+    def _sample_and_input_frame(
+            self, idx_pde: int
+            ) -> Tuple[Dict[str, Any], NDArray[np.float32]]:
+        sample = self.dataset[self._sample_index(idx_pde)]
+        space_grid = normalize_space_grid(
+            _as_numpy(sample["space_grid"]), self.normalize_coordinates)
+        input_frame = _last_input_frame_channel_last(
+            _as_numpy(sample["input_fields"]),
+            self.selected_channels,
+            tuple(space_grid.shape[:-1]),
+        )
+        return sample, input_frame
+
     def __getitem__(self, idx_pde: int) -> Tuple[NDArray[float]]:
-        sample = self.dataset[int(idx_pde)]
-        input_fields = _as_numpy(sample["input_fields"])
+        sample, ic_frame = self._sample_and_input_frame(idx_pde)
         output_fields = _as_numpy(sample["output_fields"])
         space_grid = normalize_space_grid(
             _as_numpy(sample["space_grid"]),
             self.normalize_coordinates,
         )
-        output_time_grid = normalize_time_grid(
+        raw_output_time_grid = forecast_time_grid(
+            _as_numpy(sample["input_time_grid"]),
             _as_numpy(sample["output_time_grid"]),
+        )
+        output_time_grid = normalize_time_grid(
+            raw_output_time_grid,
             self.normalize_time,
         )
 
         spatial_shape = tuple(space_grid.shape[:-1])
-        ic_frame = _last_input_frame_channel_last(
-            input_fields, self.selected_channels, spatial_shape)
         input_field, _, _ = interpolate_fields_to_resolution(
             ic_frame, space_grid, self.function_resolution)
         u_label = _select_channels_channel_last(
             output_fields, self.selected_channels, spatial_shape, "output_fields")
+        if self.target_mode == "residual":
+            u_label = _normalized_residual_target(
+                ic_frame,
+                u_label,
+                self.field_affine,
+                self.delta_affine,
+                self.field_names,
+            )
         u_label = np.expand_dims(u_label, axis=-2)
         txyz_coord = _coordinate_with_z_axis(space_grid, output_time_grid)
         scalar_dict = _constant_scalar_dict(
@@ -330,6 +481,40 @@ class TheWellInputDataset(CartesianGridInputFileDataset):
         )
         return input_field, input_scalar, txyz_coord, u_label
 
+    def reconstruct_prediction(self,
+                               idx_pde: int,
+                               idx_var: int,
+                               pred: torch.Tensor,
+                               label: torch.Tensor
+                               ) -> Tuple[torch.Tensor, torch.Tensor]:
+        r"""Reconstruct normalized absolute states for residual-mode metrics."""
+        if self.target_mode != "residual":
+            return pred, label
+        _, input_frame = self._sample_and_input_frame(idx_pde)
+        input_var = input_frame[..., idx_var].reshape(-1)
+        if pred.ndim != 2 or pred.shape[-1] != 1:
+            raise ValueError(
+                "Well residual reconstruction expects [n_points, 1], got "
+                f"{tuple(pred.shape)}.")
+        n_points = int(pred.shape[0])
+        if n_points % input_var.size != 0:
+            raise ValueError(
+                f"Prediction has {n_points} points, which is not divisible by "
+                f"the input grid size {input_var.size}.")
+        n_times = n_points // input_var.size
+        initial = np.tile(input_var, n_times).reshape(n_points, 1)
+        initial = torch.as_tensor(initial, dtype=pred.dtype, device=pred.device)
+
+        field_name = self.field_names[idx_var]
+        field_scale = self.field_affine[field_name][1]
+        delta_mean, delta_scale = self.delta_affine[field_name]
+
+        def reconstruct(value: torch.Tensor) -> torch.Tensor:
+            physical_delta = value * delta_scale + delta_mean
+            return initial + physical_delta / field_scale
+
+        return reconstruct(pred), reconstruct(label)
+
     def get_pde_info(self,
                      idx_pde: int,
                      idx_var: Optional[int] = None) -> Dict[str, Any]:
@@ -339,6 +524,7 @@ class TheWellInputDataset(CartesianGridInputFileDataset):
             "well_split": self.split,
             "well_selected_channels": self.selected_channels,
             "well_field_names": self.field_names,
+            "well_target_mode": self.target_mode,
             "well_equation_notes": self.spec.notes,
         })
         return data_info

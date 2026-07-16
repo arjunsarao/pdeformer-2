@@ -24,7 +24,11 @@ data:
       n_steps_input: 1
       n_steps_output: 1
       dt_stride: 1
+      # Train either on normalized absolute states or normalized state deltas.
+      target_mode: absolute
       max_fields: 8
+      # Spread small requested subsets across files, trajectories, and times.
+      sample_indexing: uniform
       normalize_coordinates: true
       normalize_time: true
 

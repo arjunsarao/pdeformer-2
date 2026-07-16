@@ -50,9 +50,24 @@ def normalize_space_grid(space_grid: NDArray[np.floating], enabled: bool = True)
     return out
 
 
+def forecast_time_grid(input_time_grid: NDArray[np.floating],
+                       output_time_grid: NDArray[np.floating]) -> Array:
+    r"""Return forecast lead times relative to the final supplied input frame.
+
+    PDEformer treats an attached initial condition as the solution at ``t=0``.
+    Well samples may contain several input frames, so output times must be
+    shifted before they are used as PDEformer query coordinates.
+    """
+    input_times = np.asarray(input_time_grid, dtype=np.float32).reshape(-1)
+    output_times = np.asarray(output_time_grid, dtype=np.float32)
+    if input_times.size == 0:
+        raise ValueError("input_time_grid must contain at least one time.")
+    return (output_times - input_times[-1]).astype(np.float32)
+
+
 def normalize_time_grid(time_grid: NDArray[np.floating], enabled: bool = True) -> Array:
-    r"""Map a Well output time grid to PDEformer's normalized time scale."""
-    time_grid = time_grid.astype(np.float32)
+    r"""Map forecast lead times to PDEformer's normalized time scale."""
+    time_grid = np.asarray(time_grid, dtype=np.float32)
     if not enabled:
         return time_grid
     max_abs = float(np.max(np.abs(time_grid)))
@@ -127,7 +142,8 @@ def build_well_pde_dag(
         space_grid: Array,
         channel_names: Sequence[str],
         equation_scalars: Optional[Dict[str, float]] = None,
-        coordinate_scales: Optional[Dict[str, float]] = None) -> PDEAsDAG:
+        coordinate_scales: Optional[Dict[str, float]] = None,
+        field_affine: Optional[Dict[str, Tuple[float, float]]] = None) -> PDEAsDAG:
     r"""Build a PDEformer DAG with numeric ICs for a Well sample."""
     resolution = int(config.model.function_encoder.get("resolution", 128))
     ic_on_fenc, x_ext, y_ext = interpolate_fields_to_resolution(
@@ -140,6 +156,7 @@ def build_well_pde_dag(
         ic_on_fenc,
         equation_scalars=equation_scalars,
         coordinate_scales=coordinate_scales,
+        field_affine=field_affine,
     )
     return pde.gen_dag(config)
 
@@ -149,7 +166,8 @@ def build_well_pde_template(
         channel_names: Sequence[str],
         x_ext: Array,
         y_ext: Array,
-        coordinate_scales: Optional[Dict[str, float]] = None) -> PDENodesCollector:
+        coordinate_scales: Optional[Dict[str, float]] = None,
+        field_affine: Optional[Dict[str, Tuple[float, float]]] = None) -> PDENodesCollector:
     r"""Build a PDE graph with NaN IC placeholders for a Well dataset."""
     return _build_pde(
         dataset_name,
@@ -158,6 +176,7 @@ def build_well_pde_template(
         y_ext,
         None,
         coordinate_scales=coordinate_scales,
+        field_affine=field_affine,
     )
 
 
@@ -182,7 +201,8 @@ def _build_pde(
         y_ext: Array,
         ic_fields: Optional[Array],
         equation_scalars: Optional[Dict[str, float]] = None,
-        coordinate_scales: Optional[Dict[str, float]] = None) -> PDENodesCollector:
+        coordinate_scales: Optional[Dict[str, float]] = None,
+        field_affine: Optional[Dict[str, Tuple[float, float]]] = None) -> PDENodesCollector:
     spec = get_well_equation_spec(dataset_name)
     if spec.spatial_dims != 2:
         raise ValueError(
@@ -198,6 +218,7 @@ def _build_pde(
     context = {
         "equation_scalars": equation_scalars or {},
         "coordinate_scales": coordinate_scales or {},
+        "field_affine": field_affine or {},
     }
     spec.builder(pde, variables, [str(name) for name in channel_names], context)
     return pde
@@ -281,28 +302,37 @@ def _gray_scott(pde: PDENodesCollector, v: List[PDENode], names: List[str], cont
         if abs(y_scale) < 1.0e-12:
             y_scale = 1.0
 
+        affine = context.get("field_affine", {})
+        mean_a, std_a = affine.get("A", (0.0, 1.0))
+        mean_b, std_b = affine.get("B", (0.0, 1.0))
+        if abs(std_a) < 1.0e-12 or abs(std_b) < 1.0e-12:
+            raise ValueError("Gray-Scott field normalization scales must be nonzero.")
+
         d_a_x = _scaled_coef(pde, 2.0e-5, time_scale / (x_scale * x_scale))
         d_a_y = _scaled_coef(pde, 2.0e-5, time_scale / (y_scale * y_scale))
         d_b_x = _scaled_coef(pde, 1.0e-5, time_scale / (x_scale * x_scale))
         d_b_y = _scaled_coef(pde, 1.0e-5, time_scale / (y_scale * y_scale))
         feed = _sample_or_placeholder_coef(pde, scalars, "F", time_scale)
         kill = _sample_or_placeholder_coef(pde, scalars, "k", time_scale)
-        reaction_scale = pde.new_coef(time_scale)
+        reaction_scale_a = pde.new_coef(time_scale / std_a)
+        reaction_scale_b = pde.new_coef(time_scale / std_b)
         one = pde.new_coef(1.0)
-        ab2 = a * b * b
+        a_physical = pde.new_coef(mean_a) + pde.new_coef(std_a) * a
+        b_physical = pde.new_coef(mean_b) + pde.new_coef(std_b) * b
+        ab2 = a_physical * b_physical * b_physical
         pde.sum_eq0(
             a.dt,
             -(d_a_x * a.dx.dx),
             -(d_a_y * a.dy.dy),
-            reaction_scale * ab2,
-            -(feed * (one - a)),
+            reaction_scale_a * ab2,
+            -((feed * (1.0 / std_a)) * (one - a_physical)),
         )
         pde.sum_eq0(
             b.dt,
             -(d_b_x * b.dx.dx),
             -(d_b_y * b.dy.dy),
-            -(reaction_scale * ab2),
-            (feed + kill) * b,
+            -(reaction_scale_b * ab2),
+            ((feed + kill) * (1.0 / std_b)) * b_physical,
         )
         return
     _add_closure_eqs(pde, v, 20.0)

@@ -14,6 +14,7 @@ import json
 import math
 import os
 import sys
+import warnings
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Sequence, Tuple
@@ -33,11 +34,18 @@ from src.data.pde_dag import PDEAsDAG, PDENodesCollector
 from src.data.single_pde.dataset_well import (
     _constant_scalar_dict,
     _coordinate_scales,
+    _delta_affine_from_normalizer,
+    _field_affine_from_normalizer,
+    _field_names_from_metadata,
     _infer_channel_count,
     _last_input_frame_channel_last,
+    _normalized_absolute_from_residual,
     _select_channels_channel_last,
 )
-from src.data.well_equations import build_well_pde_dag
+from src.data.well_equations import (
+    build_well_pde_dag,
+    forecast_time_grid,
+)
 from src.torch_compat import Tensor, context
 from src.torch_compat import dtype as mstype
 from src.utils import load_config
@@ -171,6 +179,10 @@ def parse_args() -> argparse.Namespace:
                         help=("Normalize PDEformer inputs with The Well stats and "
                               "denormalize predictions before metrics. The Well "
                               "benchmark commonly uses normalized model inputs."))
+    parser.add_argument("--target-mode", default="auto",
+                        choices=["auto", "absolute", "residual"],
+                        help=("Model output target. 'auto' reads the Well adapter "
+                              "setting from --config and otherwise uses absolute."))
     parser.add_argument("--normalization-path", default=None,
                         help=("Optional stats.yaml path. Defaults to the WellDataset "
                               "normalization path."))
@@ -179,6 +191,10 @@ def parse_args() -> argparse.Namespace:
                         help="Compute The Well validation metric suite.")
     parser.add_argument("--points-per-batch", type=int, default=65536,
                         help="Number of query points per model call.")
+    parser.add_argument("--sample-seed", type=int, default=123456,
+                        help="Seed used to select examples across the split.")
+    parser.add_argument("--sample-indexing", choices=["uniform", "sequential"],
+                        default="uniform", help="How requested examples are selected.")
     parser.add_argument("--normalize-coordinates", action=argparse.BooleanOptionalAction,
                         default=True,
                         help="Map Well spatial coordinates to [0, 1] per axis.")
@@ -223,6 +239,26 @@ def load_pdeformer(config_path: str, checkpoint: Optional[str], device: torch.de
     model.to(device)
     model.eval()
     return model, config
+
+
+def resolve_device(requested: Optional[str],
+                   device_target: str,
+                   cuda_available: Optional[bool] = None) -> torch.device:
+    r"""Resolve an explicit/automatic device without forcing broken CUDA."""
+    if cuda_available is None:
+        cuda_available = torch.cuda.is_available()
+    device_name = requested or (
+        "cuda:0" if device_target == "GPU" and cuda_available else "cpu")
+    device = torch.device(device_name)
+    if device.type == "cuda" and not cuda_available:
+        warnings.warn(
+            f"Requested device {device_name!r}, but CUDA cannot be initialized "
+            "by this PyTorch build. Falling back to CPU. Install a PyTorch "
+            "build compatible with the cluster NVIDIA driver to use the GPU.",
+            RuntimeWarning,
+        )
+        device = torch.device("cpu")
+    return device
 
 
 def as_numpy(sample_value: torch.Tensor) -> Array:
@@ -391,8 +427,15 @@ def choose_channels(output_fields: Array,
     return field_indices
 
 
-def iter_sample_indices(num_available: int, num_requested: int) -> Iterable[int]:
-    return range(min(num_available, num_requested))
+def iter_sample_indices(num_available: int,
+                        num_requested: int,
+                        indexing: str = "uniform",
+                        seed: int = 123456) -> Iterable[int]:
+    count = min(num_available, num_requested)
+    if indexing == "sequential":
+        return range(count)
+    rng = np.random.default_rng(seed)
+    return rng.choice(num_available, size=count, replace=False).tolist()
 
 
 def append_well_metrics(accumulator: MetricAccumulator,
@@ -413,13 +456,17 @@ def append_well_metrics(accumulator: MetricAccumulator,
 
 def evaluate(args: argparse.Namespace) -> Dict[str, object]:
     require_the_well()
-    context.set_context(device_target=args.device_target)
-    default_device = "cpu"
-    if args.device_target == "GPU" and torch.cuda.is_available():
-        default_device = "cuda:0"
-    device = torch.device(args.device or default_device)
+    device = resolve_device(args.device, args.device_target)
+    context.set_context(device_target="GPU" if device.type == "cuda" else "CPU")
+    print(f"effective_device: {device}", file=sys.stderr)
 
     model, config = load_pdeformer(args.config, args.checkpoint, device)
+    target_mode = args.target_mode
+    if target_mode == "auto":
+        well_cfg = config.get("data", {}).get("single_pde", {}).get("well", {})
+        target_mode = str(well_cfg.get("target_mode", "absolute")).lower()
+    if target_mode not in {"absolute", "residual"}:
+        raise ValueError(f"Unknown target mode: {target_mode!r}")
     norm_cls = normalization_cls(args.well_normalization)
     dataset_kwargs = {
         "well_split_name": args.split,
@@ -448,17 +495,26 @@ def evaluate(args: argparse.Namespace) -> Dict[str, object]:
         well_metrics={},
         well_metrics_by_channel={},
     )
-    channel_names = dataset.metadata.field_names
+    baseline_accumulators = {
+        name: MetricAccumulator([], {}, {}, {})
+        for name in ("persistence", "normalized_mean", "physical_zero")
+    }
+    channel_names = _field_names_from_metadata(dataset.metadata)
     norm = getattr(dataset, "norm", None)
     selected_channels = None
     examples = []
 
-    for sample_idx in iter_sample_indices(len(dataset), args.num_samples):
+    sample_indices = list(iter_sample_indices(
+        len(dataset), args.num_samples, args.sample_indexing, args.sample_seed))
+    for sample_idx in sample_indices:
         sample = dataset[sample_idx]
         input_fields = as_numpy(sample["input_fields"])
         output_fields = as_numpy(sample["output_fields"])
         raw_space_grid = as_numpy(sample["space_grid"])
-        raw_output_time_grid = as_numpy(sample["output_time_grid"])
+        raw_output_time_grid = forecast_time_grid(
+            as_numpy(sample["input_time_grid"]),
+            as_numpy(sample["output_time_grid"]),
+        )
         coordinate_scales = _coordinate_scales(
             raw_space_grid,
             raw_output_time_grid,
@@ -487,6 +543,12 @@ def evaluate(args: argparse.Namespace) -> Dict[str, object]:
             output_fields, tuple(selected_channels), spatial_shape, "output_fields")
         pde_dag = None
         selected_names = [channel_names[channel] for channel in selected_channels]
+        field_affine = _field_affine_from_normalizer(
+            norm, selected_names, selected_channels)
+        delta_affine = None
+        if target_mode == "residual":
+            delta_affine = _delta_affine_from_normalizer(
+                norm, selected_names, selected_channels)
         if args.pde_preset == "well_equation":
             scalar_dict = _constant_scalar_dict(
                 dataset.metadata,
@@ -500,6 +562,7 @@ def evaluate(args: argparse.Namespace) -> Dict[str, object]:
                 selected_names,
                 equation_scalars=scalar_dict,
                 coordinate_scales=coordinate_scales,
+                field_affine=field_affine,
             )
         pred_channels = []
         target_channels = []
@@ -520,14 +583,35 @@ def evaluate(args: argparse.Namespace) -> Dict[str, object]:
                 device,
                 idx_var=local_idx if args.pde_preset == "well_equation" else 0,
             )
+            if target_mode == "residual":
+                field_name = selected_names[local_idx]
+                pred = _normalized_absolute_from_residual(
+                    ic_frame[..., [local_idx]],
+                    pred[..., np.newaxis],
+                    {field_name: field_affine[field_name]},
+                    {field_name: delta_affine[field_name]},
+                    (field_name,),
+                )[..., 0]
             target = output_selected[..., local_idx]
             pred_raw = denormalize_selected_channels(
                 pred[..., np.newaxis], norm, [channel])[..., 0]
             target_raw = denormalize_selected_channels(
                 target[..., np.newaxis], norm, [channel])[..., 0]
+            persistence = np.broadcast_to(
+                ic_frame[..., local_idx], target.shape).copy()
+            persistence_raw = denormalize_selected_channels(
+                persistence[..., np.newaxis], norm, [channel])[..., 0]
+            normalized_mean_raw = denormalize_selected_channels(
+                np.zeros_like(target)[..., np.newaxis], norm, [channel])[..., 0]
             pred_channels.append(pred_raw)
             target_channels.append(target_raw)
             accumulator.append(channel, pred_raw, target_raw)
+            baseline_accumulators["persistence"].append(
+                channel, persistence_raw, target_raw)
+            baseline_accumulators["normalized_mean"].append(
+                channel, normalized_mean_raw, target_raw)
+            baseline_accumulators["physical_zero"].append(
+                channel, np.zeros_like(target_raw), target_raw)
 
         if pred_channels and args.well_metrics:
             pred_stack = np.stack(pred_channels, axis=-1)
@@ -556,6 +640,9 @@ def evaluate(args: argparse.Namespace) -> Dict[str, object]:
         "split": args.split,
         "num_samples_requested": args.num_samples,
         "num_samples_evaluated": min(len(dataset), args.num_samples),
+        "sample_indices": sample_indices,
+        "sample_indexing": args.sample_indexing,
+        "sample_seed": args.sample_seed,
         "pde_preset": args.pde_preset,
         "selected_channel_indices": selected_channels,
         "well_channel_names_by_tensor_order": channel_names,
@@ -563,15 +650,21 @@ def evaluate(args: argparse.Namespace) -> Dict[str, object]:
             "coordinates_to_unit_box": args.normalize_coordinates,
             "time_to_unit_interval": args.normalize_time,
             "well_input_normalization": args.well_normalization,
+            "model_target_mode": target_mode,
             "normalization_path": str(getattr(dataset, "normalization_path", "")),
             "predictions_denormalized_for_metrics": norm is not None,
         },
         "metrics": accumulator.summary(),
+        "baseline_metrics": {
+            name: baseline.summary()
+            for name, baseline in baseline_accumulators.items()
+        },
         "examples": examples,
         "notes": [
             "The Well provides trajectories, not PDEformer symbolic DAGs.",
             "With --pde-preset well_equation, this evaluator uses the dataset-specific equations in src.data.well_equations.",
             "When --well-normalization is not 'none', PDEformer receives normalized initial conditions and metrics are computed after denormalization.",
+            "Residual-target model outputs are reconstructed to absolute states before metric computation.",
             "The Well validation metric suite is computed on channel-last [B,T,...,C] tensors for the selected channels.",
             "Some Well descriptions reference paper equations or unresolved source terms; those DAGs include learned closure nodes for the unspecified terms.",
         ],

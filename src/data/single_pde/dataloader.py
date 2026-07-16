@@ -2,6 +2,7 @@ r"""Loading datasets containing one specific PDE (single_pde), mainly PDEBench d
 from typing import Tuple, Union, List, Dict, Any, Callable
 
 import numpy as np
+import torch
 from numpy.typing import NDArray
 from omegaconf import DictConfig
 
@@ -61,6 +62,10 @@ class PDEOutputDataset(Dataset):
     def add_model_config_(self, config: DictConfig, idx_pde: int = 0) -> None:
         r"""Add config options related to model hyperparameters."""
         # nothing to do by default
+
+    def reconstruct_prediction(self, pred, label, data_idx):
+        r"""Map model targets back to the state space used for evaluation."""
+        return pred, label
 
 
 class NO2DModelPDEDataset(PDEOutputDataset):
@@ -225,6 +230,23 @@ class PDEformerPDEDataset(INRModelPDEDataset):
             idx_pde = len(self.input_dataset) - 1 - idx_pde
         data_info = self.input_dataset.get_pde_info(idx_pde, idx_var)
         return data_info
+
+    def reconstruct_prediction(self, pred, label, data_idx):
+        reconstruct = getattr(self.input_dataset, "reconstruct_prediction", None)
+        if reconstruct is None:
+            return pred, label
+        pred_batch = []
+        label_batch = []
+        for in_batch_idx in range(int(data_idx.shape[0])):
+            idx_pde, idx_var = divmod(
+                int(data_idx[in_batch_idx]), self.input_dataset.n_vars)
+            if self.test:
+                idx_pde = len(self.input_dataset) - 1 - idx_pde
+            pred_item, label_item = reconstruct(
+                idx_pde, idx_var, pred[in_batch_idx], label[in_batch_idx])
+            pred_batch.append(pred_item)
+            label_batch.append(label_item)
+        return torch.stack(pred_batch), torch.stack(label_batch)
 
 
 def preprocess_single_pde(config: DictConfig,

@@ -34,11 +34,16 @@ FIELD_INDICES="${FIELD_INDICES:-}"
 MAX_FIELDS="${MAX_FIELDS:-4}"
 PDE_PRESET="${PDE_PRESET:-well_equation}"
 WELL_NORMALIZATION="${WELL_NORMALIZATION:-zscore}"
+TARGET_MODE="${TARGET_MODE:-auto}"
 NORMALIZATION_PATH="${NORMALIZATION_PATH:-}"
 POINTS_PER_BATCH="${POINTS_PER_BATCH:-65536}"
+SAMPLE_SEED="${SAMPLE_SEED:-123456}"
+SAMPLE_INDEXING="${SAMPLE_INDEXING:-uniform}"
+AUTO_PREPARE_WELL_DATASET="${AUTO_PREPARE_WELL_DATASET:-auto}"
 DEVICE_TARGET="${DEVICE_TARGET:-GPU}"
-DEVICE="${DEVICE:-cuda:0}"
-OUTPUT_PATH="${OUTPUT_PATH:-exp/the_well/${WELL_DATASET}_${SPLIT}_pdeformer_eval.json}"
+# Empty means auto-select CUDA when it can actually be initialized, else CPU.
+DEVICE="${DEVICE:-}"
+OUTPUT_PATH="${OUTPUT_PATH:-exp/the_well/${WELL_DATASET}_${SPLIT}_pdeformer_eval_${SLURM_JOB_ID:-local}.json}"
 
 # Use the repo-local virtualenv when available; otherwise fall back to uv/python.
 if [ -x ".venv/bin/python" ]; then
@@ -52,6 +57,70 @@ fi
 cd "${SLURM_SUBMIT_DIR:-$(pwd)}"
 mkdir -p slurm_logs "$(dirname "${OUTPUT_PATH}")"
 
+split_has_hdf5() {
+  local split_dir="$1"
+  compgen -G "${split_dir}/*.hdf5" >/dev/null \
+    || compgen -G "${split_dir}/*.h5" >/dev/null
+}
+
+prepare_well_dataset_if_needed() {
+  # Direct paths and remote backends manage their own storage.
+  if [ -n "${WELL_PATH}" ] || [[ "${WELL_BASE_PATH}" == *"://"* ]]; then
+    return 0
+  fi
+
+  local root_dir="${WELL_BASE_PATH}"
+  local dataset_dir alt_dataset_dir
+  if [ -z "${root_dir}" ]; then
+    return 0
+  fi
+  if [ "$(basename "${root_dir}")" = "${WELL_DATASET}" ]; then
+    dataset_dir="${root_dir}"
+    root_dir="$(dirname "${root_dir}")"
+  else
+    dataset_dir="${root_dir}/${WELL_DATASET}"
+  fi
+  alt_dataset_dir="${root_dir}/datasets/${WELL_DATASET}"
+
+  if split_has_hdf5 "${dataset_dir}/data/${SPLIT}"; then
+    return 0
+  fi
+  if split_has_hdf5 "${alt_dataset_dir}/data/${SPLIT}"; then
+    mkdir -p "${root_dir}"
+    if [ -L "${dataset_dir}" ] || [ ! -e "${dataset_dir}" ]; then
+      ln -sfn "datasets/${WELL_DATASET}" "${dataset_dir}"
+      echo "Created ${dataset_dir} -> datasets/${WELL_DATASET}"
+    fi
+    return 0
+  fi
+
+  case "${AUTO_PREPARE_WELL_DATASET}" in
+    true|TRUE|1|yes|YES|on|ON)
+      ;;
+    auto|AUTO)
+      if [[ "${root_dir}" != /local_scratch/* ]]; then
+        return 0
+      fi
+      ;;
+    *)
+      return 0
+      ;;
+  esac
+
+  echo "Preparing ${WELL_DATASET}/${SPLIT} on $(hostname) at ${root_dir}"
+  DEST_ROOT="${root_dir}" \
+  WELL_DATASET="${WELL_DATASET}" \
+  SPLITS="${SPLIT}" \
+  bash scripts/download_the_well_gray_scott_to_local_scratch.sh
+
+  if ! split_has_hdf5 "${dataset_dir}/data/${SPLIT}"; then
+    echo "Dataset staging completed but ${dataset_dir}/data/${SPLIT} has no HDF5 files." >&2
+    exit 1
+  fi
+}
+
+prepare_well_dataset_if_needed
+
 echo "job_id: ${SLURM_JOB_ID:-local}"
 echo "host: $(hostname)"
 echo "config_path: ${CONFIG_PATH}"
@@ -63,6 +132,9 @@ echo "split: ${SPLIT}"
 echo "num_samples: ${NUM_SAMPLES}"
 echo "field_indices: ${FIELD_INDICES}"
 echo "well_normalization: ${WELL_NORMALIZATION}"
+echo "target_mode: ${TARGET_MODE}"
+echo "sample_indexing: ${SAMPLE_INDEXING}"
+echo "sample_seed: ${SAMPLE_SEED}"
 echo "output_path: ${OUTPUT_PATH}"
 echo "device_target: ${DEVICE_TARGET}"
 echo "device: ${DEVICE}"
@@ -80,11 +152,17 @@ ARGS=(
   --max-fields "${MAX_FIELDS}"
   --pde-preset "${PDE_PRESET}"
   --well-normalization "${WELL_NORMALIZATION}"
+  --target-mode "${TARGET_MODE}"
   --points-per-batch "${POINTS_PER_BATCH}"
+  --sample-seed "${SAMPLE_SEED}"
+  --sample-indexing "${SAMPLE_INDEXING}"
   --device-target "${DEVICE_TARGET}"
-  --device "${DEVICE}"
   --output "${OUTPUT_PATH}"
 )
+
+if [ -n "${DEVICE}" ]; then
+  ARGS+=(--device "${DEVICE}")
+fi
 
 if [ -n "${WELL_PATH}" ]; then
   ARGS+=(--well-path "${WELL_PATH}")

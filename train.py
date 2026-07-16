@@ -134,6 +134,7 @@ def eval_loop(dataset_iter, dataset, img_name="result", plot_num=1):
         coordinate = input_tuple[-1]
         with torch.no_grad():
             pred = model(*input_tuple)  # [bsz, num_points, dim_out]
+        pred, label = dataset.reconstruct_prediction(pred, label, data_idx)
 
         eval_error_tmp = eval_loss_fn(pred, label, coordinate).asnumpy()  # [bsz]
         eval_error_tmp = eval_error_tmp.clip(0, 5)
@@ -239,6 +240,7 @@ def eval_plot_all_vars(dataset_iter, dataset, img_name="result", plot_num=1):
         coordinate = input_tuple[-1]
         with torch.no_grad():
             pred = model(*input_tuple)  # [bsz, num_points, dim_out]
+        pred, label = dataset.reconstruct_prediction(pred, label, data_idx)
         l2_error_tmp = calculate_l2_error(pred, label)  # [bsz]
 
         # plot label vs. pred

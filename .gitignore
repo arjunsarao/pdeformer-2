@@ -6,6 +6,8 @@ exp*
 data_download
 graphs
 test*
+!tests/
+!tests/**/*.py
 rewritten_network
 log
 results
